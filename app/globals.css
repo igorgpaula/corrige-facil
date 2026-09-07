@@ -88,7 +88,7 @@ button { font: inherit; }
 .save-state { display: flex; align-items: center; gap: 5px; color: #3f7774; font-size: .72rem; }
 .save-state svg { width: 14px; }
 
-.answer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 34px; padding-top: 14px; }
+.answer-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(10, auto); grid-auto-columns: minmax(280px, 1fr); gap: 0 34px; overflow-x: auto; padding-top: 14px; }
 .answer-row { display: flex; align-items: center; min-height: 61px; border-bottom: 1px dashed #dfe8e8; }
 .question-number { width: 46px; color: #26454b; font: 800 .82rem var(--font-geist-mono); }
 .options { display: flex; flex: 1; justify-content: space-between; gap: 7px; }
@@ -136,7 +136,7 @@ button { font: inherit; }
 .score-summary { display: flex; justify-content: center; gap: 22px; padding-bottom: 20px; border-bottom: 1px solid #e3ebeb; color: #617579; font-size: .74rem; }
 .score-summary b { color: #123b42; }
 .result-panel h4 { margin: 19px 0 4px; font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
-.answer-grid.compact { grid-template-columns: 1fr; padding-top: 4px; }
+.answer-grid.compact { grid-auto-flow: row; grid-template-rows: none; grid-template-columns: 1fr; grid-auto-columns: auto; overflow: visible; padding-top: 4px; }
 .compact .answer-row { min-height: 42px; }
 .compact .bubble { width: 27px; height: 27px; font-size: .68rem; }
 .compact .question-number { width: 39px; font-size: .72rem; }
@@ -149,7 +149,7 @@ footer svg { width: 14px; }
   .topbar { padding-inline: 20px; } .privacy-pill { width: 36px; height: 36px; padding: 0; justify-content: center; font-size: 0; }
   .intro-row { align-items: flex-start; flex-direction: column; padding-top: 28px; } .print-button { width: 100%; }
   .exam-settings { grid-template-columns: 1fr 1fr; } .setting-copy { grid-column: 1 / -1; } .setting-field { border-left: 0; } .total-card { min-height: 68px; }
-  .workspace { grid-template-columns: 1fr; } .answer-grid { grid-template-columns: 1fr; } .save-state { display: none; }
+  .workspace { grid-template-columns: 1fr; } .save-state { display: none; }
   .step div { display: none; } .stepper { gap: 11px; } .stepper::after { content: 'Configure e corrija'; color: #607579; font-size: .78rem; }
   .correction-workspace .camera-panel { order: 2; } .camera-panel { min-height: auto; } .camera-empty { min-height: 380px; padding-inline: 20px; } .photo-result { height: 430px; }
 }
