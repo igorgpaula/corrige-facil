@@ -36,7 +36,7 @@ declare global {
   }
 }
 
-const INITIAL_KEY: Answers = ['B', 'B', 'D', 'B', 'B', 'E', 'B', 'B', 'E', 'C'];
+const INITIAL_KEY: Answers = Array(10).fill(null);
 
 function imageFromFile(file: File) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -263,6 +263,7 @@ export default function Home() {
   const correct = studentAnswers.filter((answer, index) => answer && answer === answerKey[index]).length;
   const answered = studentAnswers.filter(Boolean).length;
   const grade = (correct / answerKey.length) * 10;
+  const keyComplete = answerKey.every(Boolean);
 
   const scan = async (file: File, target: 'key' | 'student') => {
     setScanning(true);
@@ -308,7 +309,7 @@ export default function Home() {
           <span>{activeStep === 2 ? <Check /> : '1'}</span><div><strong>Gabarito</strong><small>Defina as respostas</small></div>
         </button>
         <ChevronRight aria-hidden="true" />
-        <button className={activeStep === 2 ? 'step active' : 'step'} onClick={() => setActiveStep(2)} type="button">
+        <button className={activeStep === 2 ? 'step active' : 'step'} disabled={!keyComplete} onClick={() => setActiveStep(2)} type="button">
           <span>2</span><div><strong>Corrigir</strong><small>Fotografe e revise</small></div>
         </button>
       </nav>
@@ -331,8 +332,8 @@ export default function Home() {
             <input ref={keyInput} hidden type="file" accept="image/*" capture="environment" onChange={(event) => event.target.files?.[0] && scan(event.target.files[0], 'key')} />
             <Button className="primary-action" disabled={scanning} onClick={() => keyInput.current?.click()}><ImagePlus /> {scanning ? 'Lendo foto…' : 'Ler foto do gabarito'}</Button>
             <div className="divider"><span>depois</span></div>
-            <Button className="continue-action" onClick={() => setActiveStep(2)}>Corrigir uma prova <ChevronRight /></Button>
-            <p className="microcopy"><CircleHelp /> Para a leitura automática, use a folha impressa por este app.</p>
+            <Button className="continue-action" disabled={!keyComplete} onClick={() => setActiveStep(2)}>Corrigir uma prova <ChevronRight /></Button>
+            <p className="microcopy"><CircleHelp /> {keyComplete ? 'Para a leitura automática, use a folha impressa por este app.' : 'Complete as 10 respostas para liberar a correção.'}</p>
           </aside>
         </section>
       ) : (
