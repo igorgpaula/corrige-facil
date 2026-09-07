@@ -46,17 +46,17 @@ function resizeAnswers(answers: Answers, size: number): Answers {
 }
 
 function getQuestionCoordinates(index: number, count: number) {
-  const columns = count > 20 ? 2 : 1;
+  const columns = count > 25 ? 2 : 1;
   const rows = Math.ceil(count / columns);
   const column = Math.floor(index / rows);
   const row = index % rows;
-  const y = rows === 1 ? 0.42 : 0.24 + (row / (rows - 1)) * 0.6;
+  const y = rows === 1 ? 0.5 : 0.24 + (row / (rows - 1)) * 0.66;
   const bubbleXs = columns === 1
-    ? [0.36, 0.475, 0.59, 0.705, 0.82]
+    ? [0.38, 0.5, 0.62, 0.74, 0.86]
     : column === 0
-      ? [0.18, 0.25, 0.32, 0.39, 0.46]
-      : [0.58, 0.65, 0.72, 0.79, 0.86];
-  return { y, bubbleXs, numberX: columns === 1 ? 0.255 : column === 0 ? 0.105 : 0.505 };
+      ? [0.11, 0.19, 0.27, 0.35, 0.43]
+      : [0.58, 0.66, 0.74, 0.82, 0.9];
+  return { y, bubbleXs, numberX: columns === 1 ? 0.19 : column === 0 ? 0.045 : 0.515 };
 }
 
 function formatScore(value: number) {
@@ -123,17 +123,17 @@ async function readSheet(file: File, questionCount: number): Promise<ScanResult>
   const data = context.getImageData(0, 0, width, height).data;
 
   const regions = [
-    { x0: 0, x1: 0.23, y0: 0, y1: 0.17 },
-    { x0: 0.77, x1: 1, y0: 0, y1: 0.17 },
-    { x0: 0, x1: 0.23, y0: 0.83, y1: 1 },
-    { x0: 0.77, x1: 1, y0: 0.83, y1: 1 },
+    { x0: 0, x1: 0.14, y0: 0, y1: 0.075 },
+    { x0: 0.86, x1: 1, y0: 0, y1: 0.075 },
+    { x0: 0, x1: 0.14, y0: 0.925, y1: 1 },
+    { x0: 0.86, x1: 1, y0: 0.925, y1: 1 },
   ];
   const found = regions.map((region) => findRegistrationPoint(data, width, height, region));
   const fallback = [
-    { x: width * 0.075, y: height * 0.055 },
-    { x: width * 0.925, y: height * 0.055 },
-    { x: width * 0.075, y: height * 0.945 },
-    { x: width * 0.925, y: height * 0.945 },
+    { x: width * 0.05, y: height * 0.04 },
+    { x: width * 0.95, y: height * 0.04 },
+    { x: width * 0.05, y: height * 0.96 },
+    { x: width * 0.95, y: height * 0.96 },
   ];
   const [tl, tr, bl, br] = found.map((point, index) => point ?? fallback[index]);
 
@@ -207,30 +207,36 @@ function AnswerGrid({ answers, onChange, compact = false }: { answers: Answers; 
 
 function PrintableSheet({ questionCount, pointsPerQuestion }: { questionCount: number; pointsPerQuestion: number }) {
   const total = questionCount * pointsPerQuestion;
+  const columns = questionCount > 25 ? 2 : 1;
+  const rows = Math.ceil(questionCount / columns);
+  const cardHeight = Math.min(250, Math.max(90, 58 + rows * 7.4));
+  const printPosition = (value: number, axis: 'x' | 'y') => `${((axis === 'x' ? 0.05 : 0.04) + value * (axis === 'x' ? 0.9 : 0.92)) * 100}%`;
   return (
     <section className="print-sheet" aria-hidden="true">
-      <div className="print-marker marker-tl" /><div className="print-marker marker-tr" />
-      <div className="print-marker marker-bl" /><div className="print-marker marker-br" />
-      <div className="print-heading">
-        <span>FOLHA DE RESPOSTAS</span><h1>Corrige Fácil</h1>
-        <div className="student-fields">
-          <p>Aluno(a): ______________________________________________</p>
-          <p>Turma: ____________________ Data: ____ / ____ / ______</p>
+      <div className={columns === 1 ? 'print-card' : 'print-card wide'} style={{ height: `${cardHeight}mm` }}>
+        <div className="print-marker marker-tl" /><div className="print-marker marker-tr" />
+        <div className="print-marker marker-bl" /><div className="print-marker marker-br" />
+        <div className="print-heading">
+          <span>RESPOSTAS</span><h1>Corrige Fácil</h1>
+          <div className="student-fields">
+            <p>Aluno(a): __________________________________</p>
+            <p>Turma: ______________</p>
+          </div>
+          <p className="print-config">{questionCount} questões · {formatScore(pointsPerQuestion)} ponto(s) cada · Total: {formatScore(total)}</p>
         </div>
-        <p className="print-config">{questionCount} questões · {formatScore(pointsPerQuestion)} ponto(s) cada · Total: {formatScore(total)}</p>
+        <div className="print-questions">
+          {Array.from({ length: questionCount }, (_, question) => {
+            const { y, bubbleXs, numberX } = getQuestionCoordinates(question, questionCount);
+            return (
+              <div className="print-question" key={question}>
+                <strong className="print-question-number" style={{ left: printPosition(numberX, 'x'), top: printPosition(y, 'y') }}>{String(question + 1).padStart(2, '0')}</strong>
+                {LETTERS.map((letter, option) => <span className="print-option" style={{ left: printPosition(bubbleXs[option], 'x'), top: printPosition(y, 'y') }} key={letter}><i>{letter}</i></span>)}
+              </div>
+            );
+          })}
+        </div>
+        <p className="print-tip">Preencha completamente um círculo. Ao fotografar, enquadre somente este quadro e mantenha os quatro quadrados visíveis.</p>
       </div>
-      <div className="print-questions">
-        {Array.from({ length: questionCount }, (_, question) => {
-          const { y, bubbleXs, numberX } = getQuestionCoordinates(question, questionCount);
-          return (
-            <div className="print-question" key={question}>
-              <strong className="print-question-number" style={{ left: `${numberX * 100}%`, top: `${y * 100}%` }}>{String(question + 1).padStart(2, '0')}</strong>
-              {LETTERS.map((letter, option) => <span className="print-option" style={{ left: `${bubbleXs[option] * 100}%`, top: `${y * 100}%` }} key={letter}><i>{letter}</i></span>)}
-            </div>
-          );
-        })}
-      </div>
-      <p className="print-tip">Preencha completamente um círculo por questão com caneta azul ou preta.</p>
     </section>
   );
 }
@@ -357,7 +363,7 @@ export default function Home() {
 
       <section className="intro-row">
         <div><p className="section-kicker">GABARITO ÓPTICO · {questionCount} QUESTÕES</p><h2>Da foto à nota, em segundos.</h2><p>Configure a prova, marque o gabarito e fotografe a folha do aluno.</p></div>
-        <Button className="print-button" variant="outline" onClick={() => window.print()}><FileDown /> Imprimir folha-padrão</Button>
+        <Button className="print-button" variant="outline" onClick={() => window.print()}><FileDown /> Imprimir quadro de respostas</Button>
       </section>
 
       <section className="exam-settings" aria-label="Configuração da prova">
@@ -397,12 +403,12 @@ export default function Home() {
               <div className="sheet-mini">{[0, 1, 2, 3, 4].map((row) => <span key={row}><i /><i /><i className={row === 1 ? 'filled' : ''} /><i /><i /></span>)}</div><Sparkles />
             </div>
             <h3>Já tem um gabarito preenchido?</h3>
-            <p>Use a folha-padrão e fotografe. Você poderá revisar cada resposta reconhecida.</p>
+            <p>Fotografe somente o quadro de respostas. Você poderá revisar cada marcação reconhecida.</p>
             <input ref={keyInput} hidden type="file" accept="image/*" capture="environment" onChange={(event) => event.target.files?.[0] && scan(event.target.files[0], 'key')} />
             <Button className="primary-action" disabled={scanning} onClick={() => keyInput.current?.click()}><ImagePlus /> {scanning ? 'Lendo foto…' : 'Ler foto do gabarito'}</Button>
             <div className="divider"><span>depois</span></div>
             <Button className="continue-action" disabled={!keyComplete} onClick={() => setActiveStep(2)}>Corrigir uma prova <ChevronRight /></Button>
-            <p className="microcopy"><CircleHelp /> {keyComplete ? 'Para a leitura automática, use a folha impressa por este app.' : `Complete as ${questionCount} respostas para liberar a correção.`}</p>
+            <p className="microcopy"><CircleHelp /> {keyComplete ? 'Enquadre os quatro quadrados pretos; o restante da página pode ficar fora da foto.' : `Complete as ${questionCount} respostas para liberar a correção.`}</p>
           </aside>
         </section>
       ) : (
@@ -410,8 +416,8 @@ export default function Home() {
           <article className="panel camera-panel">
             {!preview ? (
               <div className="camera-empty">
-                <div className="camera-icon"><Camera /></div><h3>Fotografe a folha do aluno</h3>
-                <p>Deixe os quatro quadrados pretos visíveis, evite sombras e mantenha a folha reta.</p>
+                <div className="camera-icon"><Camera /></div><h3>Fotografe somente as respostas</h3>
+                <p>Enquadre o quadro no canto da prova, com os quatro quadrados pretos visíveis. Evite sombras e inclinação.</p>
                 <input ref={studentInput} hidden type="file" accept="image/*" capture="environment" onChange={(event) => event.target.files?.[0] && scan(event.target.files[0], 'student')} />
                 <Button className="primary-action" disabled={scanning} onClick={() => studentInput.current?.click()}><Camera /> {scanning ? 'Analisando…' : 'Abrir câmera ou galeria'}</Button>
               </div>
