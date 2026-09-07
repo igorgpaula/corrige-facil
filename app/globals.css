@@ -45,12 +45,24 @@ button { font: inherit; }
 .privacy-pill { margin-left: auto; display: flex; align-items: center; gap: 7px; padding: 8px 12px; border: 1px solid #34636a; border-radius: 999px; font-size: .78rem; color: #c8e8e6; }
 .privacy-pill svg { width: 15px; }
 
-.intro-row, .workspace, .stepper, footer { width: min(1180px, calc(100% - 40px)); margin-inline: auto; }
+.intro-row, .exam-settings, .workspace, .stepper, footer { width: min(1180px, calc(100% - 40px)); margin-inline: auto; }
 .intro-row { display: flex; justify-content: space-between; align-items: end; gap: 24px; padding: 38px 0 28px; }
 .section-kicker { margin: 0 0 7px; color: #07817b; font-size: .75rem; font-weight: 850; letter-spacing: .13em; }
 .intro-row h2 { margin: 0; font-size: clamp(1.8rem, 4vw, 3.1rem); letter-spacing: -.055em; line-height: 1.02; }
 .intro-row p:last-child { margin: 10px 0 0; color: #5d7277; font-size: 1rem; }
 .print-button { height: 44px; padding: 0 16px; border-color: #b9cecf; background: rgba(255,255,255,.66); font-weight: 700; }
+
+.exam-settings { display: grid; grid-template-columns: 1.2fr 1fr 1.2fr .7fr; gap: 14px; align-items: stretch; margin-bottom: 25px; padding: 15px; border: 1px solid #cadcdc; border-radius: 18px; background: rgba(255,255,255,.8); box-shadow: 0 12px 35px rgba(28,67,73,.055); }
+.setting-copy { display: flex; flex-direction: column; justify-content: center; padding: 4px 10px; }
+.setting-copy span { color: #087b76; font-size: .68rem; font-weight: 850; letter-spacing: .12em; }
+.setting-copy strong { margin-top: 4px; font-size: .9rem; }
+.setting-field { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 8px 12px; border-left: 1px solid #dce7e7; color: #4f676c; font-size: .75rem; font-weight: 700; }
+.setting-field input { height: 42px; border-color: #b9cecf; background: #fff; color: #123b42; font-size: 1rem; font-weight: 750; }
+.points-input { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; }
+.points-input small { color: #718489; font-size: .7rem; font-weight: 600; }
+.total-card { display: flex; flex-direction: column; justify-content: center; align-items: center; min-width: 110px; border-radius: 12px; color: #fff; background: #0d3d46; }
+.total-card span { color: #b7d8d6; font-size: .7rem; }
+.total-card strong { margin-top: 2px; font-size: 1.6rem; letter-spacing: -.05em; }
 
 .stepper { display: flex; align-items: center; gap: 18px; padding: 0 0 22px; }
 .stepper > svg { width: 18px; color: #94a7aa; }
@@ -136,14 +148,16 @@ footer svg { width: 14px; }
 @media (max-width: 800px) {
   .topbar { padding-inline: 20px; } .privacy-pill { width: 36px; height: 36px; padding: 0; justify-content: center; font-size: 0; }
   .intro-row { align-items: flex-start; flex-direction: column; padding-top: 28px; } .print-button { width: 100%; }
+  .exam-settings { grid-template-columns: 1fr 1fr; } .setting-copy { grid-column: 1 / -1; } .setting-field { border-left: 0; } .total-card { min-height: 68px; }
   .workspace { grid-template-columns: 1fr; } .answer-grid { grid-template-columns: 1fr; } .save-state { display: none; }
   .step div { display: none; } .stepper { gap: 11px; } .stepper::after { content: 'Configure e corrija'; color: #607579; font-size: .78rem; }
   .correction-workspace .camera-panel { order: 2; } .camera-panel { min-height: auto; } .camera-empty { min-height: 380px; padding-inline: 20px; } .photo-result { height: 430px; }
 }
 @media (max-width: 430px) {
-  .intro-row, .workspace, .stepper, footer { width: min(100% - 24px, 1180px); }
+  .intro-row, .exam-settings, .workspace, .stepper, footer { width: min(100% - 24px, 1180px); }
   .intro-row h2 { font-size: 2.05rem; } .answer-panel, .action-panel, .result-panel { padding: 20px; }
   .question-number { width: 36px; } .bubble { width: 34px; height: 34px; }
+  .exam-settings { grid-template-columns: 1fr; } .setting-copy { grid-column: auto; } .setting-field { padding: 4px; } .total-card { min-height: 62px; }
 }
 
 @media print {
@@ -155,9 +169,11 @@ footer svg { width: 14px; }
   .marker-bl { left: 11.75mm; bottom: 12.33mm; } .marker-br { right: 11.75mm; bottom: 12.33mm; }
   .print-heading > span { font-size: 9pt; letter-spacing: 2px; font-weight: 800; } .print-heading h1 { margin: 1mm 0 7mm; font-size: 24pt; }
   .student-fields { display: grid; grid-template-columns: 1fr auto; gap: 8mm; font-size: 10pt; }
-  .print-questions { position: absolute; top: 64mm; left: 26mm; right: 26mm; }
-  .print-row { display: grid; grid-template-columns: 22mm repeat(5, 24.44mm); align-items: center; height: 16.3mm; border-bottom: .3mm solid #ddd; }
-  .print-row strong { font: 800 12pt var(--font-geist-mono); }
-  .print-option { display: grid; place-items: center; justify-self: center; width: 9mm; height: 9mm; border: .55mm solid #222; border-radius: 50%; }
-  .print-option i { font-style: normal; font-size: 10pt; } .print-tip { margin-top: 10mm; font-size: 9pt; text-align: center; }
+  .print-config { margin: 4mm 0 0; font-size: 9pt; font-weight: 700; }
+  .print-questions { position: absolute; inset: 0; }
+  .print-question-number, .print-option { position: absolute; transform: translate(-50%, -50%); }
+  .print-question-number { font: 800 10pt var(--font-geist-mono); }
+  .print-option { display: grid; place-items: center; width: 6mm; height: 6mm; border: .45mm solid #222; border-radius: 50%; }
+  .print-option i { font-style: normal; font-size: 7.5pt; }
+  .print-tip { position: absolute; left: 25mm; right: 25mm; bottom: 17mm; margin: 0; font-size: 9pt; text-align: center; }
 }

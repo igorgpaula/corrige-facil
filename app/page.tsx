@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E'] as const;
 type Letter = (typeof LETTERS)[number];
@@ -37,6 +38,30 @@ declare global {
 }
 
 const INITIAL_KEY: Answers = Array(10).fill(null);
+const MIN_QUESTIONS = 1;
+const MAX_QUESTIONS = 50;
+
+function resizeAnswers(answers: Answers, size: number): Answers {
+  return Array.from({ length: size }, (_, index) => answers[index] ?? null);
+}
+
+function getQuestionCoordinates(index: number, count: number) {
+  const columns = count > 20 ? 2 : 1;
+  const rows = Math.ceil(count / columns);
+  const column = Math.floor(index / rows);
+  const row = index % rows;
+  const y = rows === 1 ? 0.42 : 0.24 + (row / (rows - 1)) * 0.6;
+  const bubbleXs = columns === 1
+    ? [0.36, 0.475, 0.59, 0.705, 0.82]
+    : column === 0
+      ? [0.18, 0.25, 0.32, 0.39, 0.46]
+      : [0.58, 0.65, 0.72, 0.79, 0.86];
+  return { y, bubbleXs, numberX: columns === 1 ? 0.255 : column === 0 ? 0.105 : 0.505 };
+}
+
+function formatScore(value: number) {
+  return value.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+}
 
 function imageFromFile(file: File) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -83,7 +108,7 @@ function findRegistrationPoint(
   return { x: totalX / weight, y: totalY / weight };
 }
 
-async function readSheet(file: File): Promise<ScanResult> {
+async function readSheet(file: File, questionCount: number): Promise<ScanResult> {
   const image = await imageFromFile(file);
   const maxWidth = 1000;
   const scale = Math.min(1, maxWidth / image.naturalWidth);
@@ -121,10 +146,10 @@ async function readSheet(file: File): Promise<ScanResult> {
   const answers: Answers = [];
   const confidence: number[] = [];
 
-  for (let question = 0; question < 10; question += 1) {
-    const v = 0.243 + question * 0.0549;
+  for (let question = 0; question < questionCount; question += 1) {
+    const { y: v, bubbleXs } = getQuestionCoordinates(question, questionCount);
     const scores = LETTERS.map((_, option) => {
-      const point = mapPoint(0.287 + option * 0.1164, v);
+      const point = mapPoint(bubbleXs[option], v);
       let darkness = 0;
       let samples = 0;
       for (let dy = -radius; dy <= radius; dy += 1) {
@@ -180,7 +205,8 @@ function AnswerGrid({ answers, onChange, compact = false }: { answers: Answers; 
   );
 }
 
-function PrintableSheet() {
+function PrintableSheet({ questionCount, pointsPerQuestion }: { questionCount: number; pointsPerQuestion: number }) {
+  const total = questionCount * pointsPerQuestion;
   return (
     <section className="print-sheet" aria-hidden="true">
       <div className="print-marker marker-tl" /><div className="print-marker marker-tr" />
@@ -191,14 +217,18 @@ function PrintableSheet() {
           <p>Aluno(a): ______________________________________________</p>
           <p>Turma: ____________________ Data: ____ / ____ / ______</p>
         </div>
+        <p className="print-config">{questionCount} questões · {formatScore(pointsPerQuestion)} ponto(s) cada · Total: {formatScore(total)}</p>
       </div>
       <div className="print-questions">
-        {Array.from({ length: 10 }, (_, question) => (
-          <div className="print-row" key={question}>
-            <strong>{String(question + 1).padStart(2, '0')}</strong>
-            {LETTERS.map((letter) => <span className="print-option" key={letter}><i>{letter}</i></span>)}
-          </div>
-        ))}
+        {Array.from({ length: questionCount }, (_, question) => {
+          const { y, bubbleXs, numberX } = getQuestionCoordinates(question, questionCount);
+          return (
+            <div className="print-question" key={question}>
+              <strong className="print-question-number" style={{ left: `${numberX * 100}%`, top: `${y * 100}%` }}>{String(question + 1).padStart(2, '0')}</strong>
+              {LETTERS.map((letter, option) => <span className="print-option" style={{ left: `${bubbleXs[option] * 100}%`, top: `${y * 100}%` }} key={letter}><i>{letter}</i></span>)}
+            </div>
+          );
+        })}
       </div>
       <p className="print-tip">Preencha completamente um círculo por questão com caneta azul ou preta.</p>
     </section>
@@ -209,6 +239,9 @@ export default function Home() {
   const [answerKey, setAnswerKey] = useState<Answers>(INITIAL_KEY);
   const [studentAnswers, setStudentAnswers] = useState<Answers>(Array(10).fill(null));
   const [confidence, setConfidence] = useState<number[]>(Array(10).fill(1));
+  const [questionCount, setQuestionCount] = useState(10);
+  const [pointsPerQuestion, setPointsPerQuestion] = useState(1);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [status, setStatus] = useState('Pronto para receber a foto.');
   const [scanning, setScanning] = useState(false);
@@ -217,15 +250,26 @@ export default function Home() {
   const keyInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem('corrige-facil-gabarito');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as Answers;
-        if (parsed.length === 10) setAnswerKey(parsed);
-      } catch { /* mantém o exemplo inicial */ }
-    }
+    let savedCount = 10;
+    try {
+      const settings = JSON.parse(window.localStorage.getItem('corrige-facil-config') ?? '{}') as { questionCount?: number; pointsPerQuestion?: number };
+      savedCount = Math.min(MAX_QUESTIONS, Math.max(MIN_QUESTIONS, Math.round(settings.questionCount ?? 10)));
+      setQuestionCount(savedCount);
+      setPointsPerQuestion(Math.max(0.01, settings.pointsPerQuestion ?? 1));
+    } catch { /* usa a configuração padrão */ }
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem('corrige-facil-gabarito') ?? '[]') as Answers;
+      setAnswerKey(resizeAnswers(parsed, savedCount));
+    } catch { setAnswerKey(Array(savedCount).fill(null)); }
+    setStudentAnswers(Array(savedCount).fill(null));
+    setConfidence(Array(savedCount).fill(1));
+    setHasLoaded(true);
   }, []);
-  useEffect(() => { window.localStorage.setItem('corrige-facil-gabarito', JSON.stringify(answerKey)); }, [answerKey]);
+  useEffect(() => {
+    if (!hasLoaded) return;
+    window.localStorage.setItem('corrige-facil-gabarito', JSON.stringify(answerKey));
+    window.localStorage.setItem('corrige-facil-config', JSON.stringify({ questionCount, pointsPerQuestion }));
+  }, [answerKey, hasLoaded, pointsPerQuestion, questionCount]);
 
   useEffect(() => {
     const context = document.modelContext;
@@ -235,11 +279,11 @@ export default function Home() {
     const register = context.registerTool({
       name: 'set_answer_key',
       title: 'Definir gabarito',
-      description: 'Define as dez respostas do gabarito oficial e mostra a etapa de conferência.',
+      description: `Define as ${questionCount} respostas do gabarito oficial e mostra a etapa de conferência.`,
       inputSchema: {
         type: 'object',
         properties: {
-          answers: { type: 'array', minItems: 10, maxItems: 10, items: { type: 'string', enum: LETTERS } },
+          answers: { type: 'array', minItems: questionCount, maxItems: questionCount, items: { type: 'string', enum: LETTERS } },
         },
         required: ['answers'],
         additionalProperties: false,
@@ -247,8 +291,8 @@ export default function Home() {
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute(input) {
         const candidate = (input as { answers?: unknown })?.answers;
-        if (!Array.isArray(candidate) || candidate.length !== 10 || !candidate.every((item) => allowed.has(item as Letter))) {
-          throw new Error('Informe exatamente dez alternativas entre A e E.');
+        if (!Array.isArray(candidate) || candidate.length !== questionCount || !candidate.every((item) => allowed.has(item as Letter))) {
+          throw new Error(`Informe exatamente ${questionCount} alternativas entre A e E.`);
         }
         const next = candidate as Letter[];
         setAnswerKey(next);
@@ -258,18 +302,30 @@ export default function Home() {
     }, { signal: lifecycle.signal });
     Promise.resolve(register).catch(() => undefined);
     return () => lifecycle.abort();
-  }, []);
+  }, [questionCount]);
 
   const correct = studentAnswers.filter((answer, index) => answer && answer === answerKey[index]).length;
   const answered = studentAnswers.filter(Boolean).length;
-  const grade = (correct / answerKey.length) * 10;
+  const grade = correct * pointsPerQuestion;
+  const totalPoints = questionCount * pointsPerQuestion;
+  const scorePercent = questionCount ? (correct / questionCount) * 100 : 0;
   const keyComplete = answerKey.every(Boolean);
+
+  const updateQuestionCount = (value: number) => {
+    const nextCount = Math.min(MAX_QUESTIONS, Math.max(MIN_QUESTIONS, Math.round(value || MIN_QUESTIONS)));
+    setQuestionCount(nextCount);
+    setAnswerKey((current) => resizeAnswers(current, nextCount));
+    setStudentAnswers((current) => resizeAnswers(current, nextCount));
+    setConfidence((current) => Array.from({ length: nextCount }, (_, index) => current[index] ?? 1));
+    setPreview(null);
+    setStatus('Configuração atualizada. Confira o gabarito.');
+  };
 
   const scan = async (file: File, target: 'key' | 'student') => {
     setScanning(true);
     setStatus('Analisando marcações no seu aparelho…');
     try {
-      const result = await readSheet(file);
+      const result = await readSheet(file, questionCount);
       if (target === 'key') {
         setAnswerKey(result.answers);
         setStatus('Gabarito lido. Confira as respostas antes de corrigir.');
@@ -287,7 +343,7 @@ export default function Home() {
   };
 
   const resetStudent = () => {
-    setStudentAnswers(Array(10).fill(null)); setConfidence(Array(10).fill(1)); setPreview(null);
+    setStudentAnswers(Array(questionCount).fill(null)); setConfidence(Array(questionCount).fill(1)); setPreview(null);
     setStatus('Pronto para receber uma nova foto.');
   };
 
@@ -300,8 +356,21 @@ export default function Home() {
       </header>
 
       <section className="intro-row">
-        <div><p className="section-kicker">GABARITO ÓPTICO · 10 QUESTÕES</p><h2>Da foto à nota, em segundos.</h2><p>Marque o gabarito, fotografe a folha do aluno e confirme o resultado.</p></div>
+        <div><p className="section-kicker">GABARITO ÓPTICO · {questionCount} QUESTÕES</p><h2>Da foto à nota, em segundos.</h2><p>Configure a prova, marque o gabarito e fotografe a folha do aluno.</p></div>
         <Button className="print-button" variant="outline" onClick={() => window.print()}><FileDown /> Imprimir folha-padrão</Button>
+      </section>
+
+      <section className="exam-settings" aria-label="Configuração da prova">
+        <div className="setting-copy"><span>CONFIGURAÇÃO</span><strong>Como será calculada a nota?</strong></div>
+        <label className="setting-field" htmlFor="question-count">
+          <span>Número de questões</span>
+          <Input id="question-count" min={MIN_QUESTIONS} max={MAX_QUESTIONS} inputMode="numeric" type="number" value={questionCount} onChange={(event) => updateQuestionCount(Number(event.target.value))} />
+        </label>
+        <label className="setting-field" htmlFor="points-per-question">
+          <span>Valor de cada questão</span>
+          <div className="points-input"><Input id="points-per-question" min="0.01" step="0.1" inputMode="decimal" type="number" value={pointsPerQuestion} onChange={(event) => setPointsPerQuestion(Math.max(0.01, Number(event.target.value) || 0.01))} /><small>ponto(s)</small></div>
+        </label>
+        <div className="total-card"><span>Nota máxima</span><strong>{formatScore(totalPoints)}</strong></div>
       </section>
 
       <nav className="stepper" aria-label="Etapas da correção">
@@ -333,7 +402,7 @@ export default function Home() {
             <Button className="primary-action" disabled={scanning} onClick={() => keyInput.current?.click()}><ImagePlus /> {scanning ? 'Lendo foto…' : 'Ler foto do gabarito'}</Button>
             <div className="divider"><span>depois</span></div>
             <Button className="continue-action" disabled={!keyComplete} onClick={() => setActiveStep(2)}>Corrigir uma prova <ChevronRight /></Button>
-            <p className="microcopy"><CircleHelp /> {keyComplete ? 'Para a leitura automática, use a folha impressa por este app.' : 'Complete as 10 respostas para liberar a correção.'}</p>
+            <p className="microcopy"><CircleHelp /> {keyComplete ? 'Para a leitura automática, use a folha impressa por este app.' : `Complete as ${questionCount} respostas para liberar a correção.`}</p>
           </aside>
         </section>
       ) : (
@@ -352,9 +421,9 @@ export default function Home() {
             <p className="status-line" aria-live="polite">{status}</p>
           </article>
           <aside className="panel result-panel">
-            <div className="result-top"><div><span className="panel-index">02</span><div><h3>Resultado</h3><p>{answered}/10 respostas identificadas</p></div></div><Button aria-label="Limpar correção" size="icon" variant="ghost" onClick={resetStudent}><RotateCcw /></Button></div>
-            <div className="grade-ring" style={{ '--score': `${grade * 10}%` } as React.CSSProperties}><div><strong>{grade.toFixed(1).replace('.', ',')}</strong><span>de 10</span></div></div>
-            <div className="score-summary"><span><b>{correct}</b> acertos</span><span><b>{10 - correct}</b> erros ou vazias</span></div>
+            <div className="result-top"><div><span className="panel-index">02</span><div><h3>Resultado</h3><p>{answered}/{questionCount} respostas identificadas</p></div></div><Button aria-label="Limpar correção" size="icon" variant="ghost" onClick={resetStudent}><RotateCcw /></Button></div>
+            <div className="grade-ring" style={{ '--score': `${scorePercent}%` } as React.CSSProperties}><div><strong>{formatScore(grade)}</strong><span>de {formatScore(totalPoints)}</span></div></div>
+            <div className="score-summary"><span><b>{correct}</b> acertos</span><span><b>{questionCount - correct}</b> erros ou vazias</span></div>
             <h4>Revisão das respostas</h4><AnswerGrid compact answers={studentAnswers} onChange={setStudentAnswers} />
             {confidence.some((value, index) => value < 0.35 && studentAnswers[index]) && <p className="review-warning">Algumas marcações têm baixa confiança. Confira a foto e ajuste tocando na alternativa correta.</p>}
           </aside>
@@ -362,7 +431,7 @@ export default function Home() {
       )}
 
       <footer><LockKeyhole /> As fotos são processadas somente neste aparelho. Nenhuma conta ou assinatura é necessária.</footer>
-      <PrintableSheet />
+      <PrintableSheet questionCount={questionCount} pointsPerQuestion={pointsPerQuestion} />
     </main>
   );
 }
