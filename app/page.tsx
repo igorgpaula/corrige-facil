@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 const LETTERS = ['A', 'B', 'C', 'D', 'E'] as const;
 type Letter = (typeof LETTERS)[number];
 type Answers = Array<Letter | null>;
-type ScanResult = { answers: Answers; confidence: number[]; preview: string };
+type ScanResult = { answers: Answers; confidence: number[]; preview: string; mode: 'markers' | 'free' };
 
 declare global {
   interface Document {
@@ -108,6 +108,144 @@ function findRegistrationPoint(
   return { x: totalX / weight, y: totalY / weight };
 }
 
+function pixelDarkness(pixels: Uint8ClampedArray, offset: number) {
+  const gray = pixels[offset] * 0.299 + pixels[offset + 1] * 0.587 + pixels[offset + 2] * 0.114;
+  return Math.max(0, (185 - gray) / 185);
+}
+
+function smoothSignal(signal: Float32Array, windowSize: number) {
+  const smoothed = new Float32Array(signal.length);
+  const prefix = new Float64Array(signal.length + 1);
+  for (let index = 0; index < signal.length; index += 1) prefix[index + 1] = prefix[index] + signal[index];
+  const radius = Math.max(1, Math.floor(windowSize / 2));
+  for (let index = 0; index < signal.length; index += 1) {
+    const from = Math.max(0, index - radius);
+    const to = Math.min(signal.length, index + radius + 1);
+    smoothed[index] = (prefix[to] - prefix[from]) / (to - from);
+  }
+  return smoothed;
+}
+
+function sampleAnswerGrid(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  rows: number[],
+  columns: number[],
+  radius: number,
+  thresholds = { gap: 0.055, top: 0.16, confidence: 0.38 },
+) {
+  const answers: Answers = [];
+  const confidence: number[] = [];
+  const integerRadius = Math.max(3, Math.round(radius));
+
+  for (const row of rows) {
+    const scores = columns.map((column) => {
+      let darkness = 0;
+      let samples = 0;
+      for (let dy = -integerRadius; dy <= integerRadius; dy += 1) {
+        for (let dx = -integerRadius; dx <= integerRadius; dx += 1) {
+          if (dx * dx + dy * dy > integerRadius * integerRadius) continue;
+          const x = Math.round(column + dx);
+          const y = Math.round(row + dy);
+          if (x < 0 || y < 0 || x >= width || y >= height) continue;
+          darkness += pixelDarkness(pixels, (y * width + x) * 4);
+          samples += 1;
+        }
+      }
+      return samples ? darkness / samples : 0;
+    });
+    const ranked = scores.map((score, index) => ({ score, index })).sort((a, b) => b.score - a.score);
+    const gap = ranked[0].score - ranked[1].score;
+    answers.push(gap > thresholds.gap && ranked[0].score > thresholds.top ? LETTERS[ranked[0].index] : null);
+    confidence.push(Math.max(0, Math.min(1, gap / thresholds.confidence)));
+  }
+
+  return { answers, confidence };
+}
+
+function readFreeGrid(pixels: Uint8ClampedArray, width: number, height: number, questionCount: number) {
+  if (questionCount > 25) {
+    throw new Error('O modo de foto livre aceita até 25 questões. Para provas maiores, use o quadro com marcadores.');
+  }
+
+  const rowSignal = new Float32Array(height);
+  const xFrom = Math.round(width * 0.2);
+  const xTo = Math.round(width * 0.92);
+  for (let y = 0; y < height; y += 1) {
+    let total = 0;
+    for (let x = xFrom; x < xTo; x += 1) total += pixelDarkness(pixels, (y * width + x) * 4);
+    rowSignal[y] = total / Math.max(1, xTo - xFrom);
+  }
+  const rowWindow = Math.max(3, Math.round(height / (Math.max(2, questionCount) * 7)));
+  const smoothRows = smoothSignal(rowSignal, rowWindow);
+  let bestRowScore = -Infinity;
+  let bestStart = 0;
+  let bestStep = 0;
+
+  if (questionCount === 1) {
+    for (let y = Math.round(height * 0.1); y < height * 0.95; y += 1) {
+      if (smoothRows[y] > bestRowScore) { bestRowScore = smoothRows[y]; bestStart = y; }
+    }
+  } else {
+    const approximateStep = height / questionCount;
+    const minStep = Math.max(8, Math.round(approximateStep * 0.65));
+    const maxStep = Math.max(minStep, Math.round(approximateStep * 1.08));
+    for (let step = minStep; step <= maxStep; step += 1) {
+      const radius = Math.max(2, Math.round(step * 0.13));
+      const latestStart = Math.min(Math.round(height * 0.36), height - 1 - step * (questionCount - 1));
+      for (let start = Math.round(height * 0.035); start <= latestStart; start += 1) {
+        let score = 0;
+        for (let row = 0; row < questionCount; row += 1) {
+          const center = start + row * step;
+          let localMaximum = 0;
+          for (let y = Math.max(0, center - radius); y <= Math.min(height - 1, center + radius); y += 1) {
+            localMaximum = Math.max(localMaximum, smoothRows[y]);
+          }
+          score += localMaximum;
+        }
+        score /= questionCount;
+        const lastRow = start + step * (questionCount - 1);
+        score -= Math.abs(lastRow - height * 0.93) / height * 0.8;
+        if (score > bestRowScore) { bestRowScore = score; bestStart = start; bestStep = step; }
+      }
+    }
+  }
+
+  if (bestRowScore < 0.018) throw new Error('Não encontrei uma sequência regular de questões nesta foto.');
+  const rows = Array.from({ length: questionCount }, (_, index) => bestStart + index * bestStep);
+  const band = Math.max(3, Math.round((bestStep || height * 0.1) * 0.22));
+  const columnSignal = new Float32Array(width);
+  for (let x = 0; x < width; x += 1) {
+    let total = 0;
+    let samples = 0;
+    for (const row of rows) {
+      for (let y = Math.max(0, row - band); y <= Math.min(height - 1, row + band); y += 1) {
+        total += pixelDarkness(pixels, (y * width + x) * 4);
+        samples += 1;
+      }
+    }
+    columnSignal[x] = samples ? total / samples : 0;
+  }
+  const smoothColumns = smoothSignal(columnSignal, Math.max(3, Math.round(width * 0.018)));
+  let bestColumnScore = -Infinity;
+  let bestColumnStart = 0;
+  let bestColumnStep = 0;
+  for (let step = Math.round(width * 0.055); step <= width * 0.18; step += 1) {
+    const latestStart = Math.min(Math.round(width * 0.5), width - 1 - step * 4);
+    for (let start = Math.round(width * 0.2); start <= latestStart; start += 1) {
+      let score = 0;
+      for (let option = 0; option < 5; option += 1) score += smoothColumns[start + option * step];
+      score /= 5;
+      if (score > bestColumnScore) { bestColumnScore = score; bestColumnStart = start; bestColumnStep = step; }
+    }
+  }
+
+  if (bestColumnScore < 0.025 || !bestColumnStep) throw new Error('Não encontrei as cinco colunas A–E nesta foto.');
+  const columns = Array.from({ length: 5 }, (_, index) => bestColumnStart + index * bestColumnStep);
+  return sampleAnswerGrid(pixels, width, height, rows, columns, bestColumnStep * 0.24);
+}
+
 async function readSheet(file: File, questionCount: number): Promise<ScanResult> {
   const image = await imageFromFile(file);
   const maxWidth = 1000;
@@ -129,50 +267,34 @@ async function readSheet(file: File, questionCount: number): Promise<ScanResult>
     { x0: 0.86, x1: 1, y0: 0.925, y1: 1 },
   ];
   const found = regions.map((region) => findRegistrationPoint(data, width, height, region));
-  const fallback = [
-    { x: width * 0.05, y: height * 0.04 },
-    { x: width * 0.95, y: height * 0.04 },
-    { x: width * 0.05, y: height * 0.96 },
-    { x: width * 0.95, y: height * 0.96 },
-  ];
-  const [tl, tr, bl, br] = found.map((point, index) => point ?? fallback[index]);
+  const preview = canvas.toDataURL('image/jpeg', 0.82);
+  if (!found.every(Boolean)) {
+    const freeResult = readFreeGrid(data, width, height, questionCount);
+    return { ...freeResult, preview, mode: 'free' };
+  }
+  const [tl, tr, bl, br] = found as Array<{ x: number; y: number }>;
 
   const mapPoint = (u: number, v: number) => ({
     x: (1 - u) * (1 - v) * tl.x + u * (1 - v) * tr.x + (1 - u) * v * bl.x + u * v * br.x,
     y: (1 - u) * (1 - v) * tl.y + u * (1 - v) * tr.y + (1 - u) * v * bl.y + u * v * br.y,
   });
   const sheetWidth = Math.hypot(tr.x - tl.x, tr.y - tl.y);
-  const radius = Math.max(5, sheetWidth * 0.011);
+  const rows: number[] = [];
+  const columnsByRow: number[][] = [];
+  for (let question = 0; question < questionCount; question += 1) {
+    const { y, bubbleXs } = getQuestionCoordinates(question, questionCount);
+    const mapped = bubbleXs.map((x) => mapPoint(x, y));
+    rows.push(mapped[0].y);
+    columnsByRow.push(mapped.map((point) => point.x));
+  }
   const answers: Answers = [];
   const confidence: number[] = [];
-
   for (let question = 0; question < questionCount; question += 1) {
-    const { y: v, bubbleXs } = getQuestionCoordinates(question, questionCount);
-    const scores = LETTERS.map((_, option) => {
-      const point = mapPoint(bubbleXs[option], v);
-      let darkness = 0;
-      let samples = 0;
-      for (let dy = -radius; dy <= radius; dy += 1) {
-        for (let dx = -radius; dx <= radius; dx += 1) {
-          if (dx * dx + dy * dy > radius * radius) continue;
-          const x = Math.round(point.x + dx);
-          const y = Math.round(point.y + dy);
-          if (x < 0 || y < 0 || x >= width || y >= height) continue;
-          const offset = (y * width + x) * 4;
-          const gray = data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114;
-          darkness += (255 - gray) / 255;
-          samples += 1;
-        }
-      }
-      return samples ? darkness / samples : 0;
-    });
-    const ranked = scores.map((score, index) => ({ score, index })).sort((a, b) => b.score - a.score);
-    const gap = ranked[0].score - ranked[1].score;
-    answers.push(gap > 0.035 && ranked[0].score > 0.12 ? LETTERS[ranked[0].index] : null);
-    confidence.push(Math.max(0, Math.min(1, gap / 0.18)));
+    const result = sampleAnswerGrid(data, width, height, [rows[question]], columnsByRow[question], Math.max(5, sheetWidth * 0.011), { gap: 0.035, top: 0.12, confidence: 0.18 });
+    answers.push(result.answers[0]);
+    confidence.push(result.confidence[0]);
   }
-
-  return { answers, confidence, preview: canvas.toDataURL('image/jpeg', 0.82) };
+  return { answers, confidence, preview, mode: 'markers' };
 }
 
 function AnswerGrid({ answers, onChange, compact = false }: { answers: Answers; onChange: (next: Answers) => void; compact?: boolean }) {
@@ -334,13 +456,13 @@ export default function Home() {
       const result = await readSheet(file, questionCount);
       if (target === 'key') {
         setAnswerKey(result.answers);
-        setStatus('Gabarito lido. Confira as respostas antes de corrigir.');
+        setStatus(result.mode === 'free' ? 'Gabarito detectado em modo livre. Confira as respostas.' : 'Gabarito lido pelos marcadores. Confira as respostas.');
         setActiveStep(1);
       } else {
         setStudentAnswers(result.answers);
         setConfidence(result.confidence);
         setPreview(result.preview);
-        setStatus('Correção concluída. Revise os itens destacados.');
+        setStatus(result.mode === 'free' ? 'Respostas detectadas em modo livre. Revise antes de registrar a nota.' : 'Correção concluída pelos marcadores. Revise os itens destacados.');
         setActiveStep(2);
       }
     } catch (error) {
@@ -403,12 +525,12 @@ export default function Home() {
               <div className="sheet-mini">{[0, 1, 2, 3, 4].map((row) => <span key={row}><i /><i /><i className={row === 1 ? 'filled' : ''} /><i /><i /></span>)}</div><Sparkles />
             </div>
             <h3>Já tem um gabarito preenchido?</h3>
-            <p>Fotografe somente o quadro de respostas. Você poderá revisar cada marcação reconhecida.</p>
+            <p>Use uma foto nítida como a do exemplo, mesmo sem marcadores. Você poderá revisar cada marcação reconhecida.</p>
             <input ref={keyInput} hidden type="file" accept="image/*" capture="environment" onChange={(event) => event.target.files?.[0] && scan(event.target.files[0], 'key')} />
             <Button className="primary-action" disabled={scanning} onClick={() => keyInput.current?.click()}><ImagePlus /> {scanning ? 'Lendo foto…' : 'Ler foto do gabarito'}</Button>
             <div className="divider"><span>depois</span></div>
             <Button className="continue-action" disabled={!keyComplete} onClick={() => setActiveStep(2)}>Corrigir uma prova <ChevronRight /></Button>
-            <p className="microcopy"><CircleHelp /> {keyComplete ? 'Enquadre os quatro quadrados pretos; o restante da página pode ficar fora da foto.' : `Complete as ${questionCount} respostas para liberar a correção.`}</p>
+            <p className="microcopy"><CircleHelp /> {keyComplete ? 'Com ou sem marcadores, enquadre somente as linhas e as cinco alternativas.' : `Complete as ${questionCount} respostas para liberar a correção.`}</p>
           </aside>
         </section>
       ) : (
@@ -417,7 +539,7 @@ export default function Home() {
             {!preview ? (
               <div className="camera-empty">
                 <div className="camera-icon"><Camera /></div><h3>Fotografe somente as respostas</h3>
-                <p>Enquadre o quadro no canto da prova, com os quatro quadrados pretos visíveis. Evite sombras e inclinação.</p>
+                <p>Enquadre somente as linhas e as cinco alternativas. Marcadores ajudam, mas não são mais obrigatórios.</p>
                 <input ref={studentInput} hidden type="file" accept="image/*" capture="environment" onChange={(event) => event.target.files?.[0] && scan(event.target.files[0], 'student')} />
                 <Button className="primary-action" disabled={scanning} onClick={() => studentInput.current?.click()}><Camera /> {scanning ? 'Analisando…' : 'Abrir câmera ou galeria'}</Button>
               </div>
