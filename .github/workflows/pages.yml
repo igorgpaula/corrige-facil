@@ -41,6 +41,11 @@ jobs:
           GITHUB_PAGES_BASE_PATH: /corrige-facil
         run: pnpm build
 
+      - name: Organizar os arquivos estáticos
+        run: |
+          cp -R dist/client/corrige-facil/_next dist/client/_next
+          rm -rf dist/client/corrige-facil
+
       - name: Preparar o GitHub Pages
         uses: actions/configure-pages@v5
 
