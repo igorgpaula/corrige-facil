@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import {
   Camera,
   Check,
@@ -462,42 +462,53 @@ function AnswerGrid({
   answers,
   onChange,
   compact = false,
+  answerKey,
 }: {
   answers: Answers;
   onChange: (next: Answers) => void;
   compact?: boolean;
+  answerKey?: Answers;
 }) {
   return (
     <div className={compact ? 'answer-grid compact' : 'answer-grid'}>
-      {answers.map((answer, question) => (
-        <div className="answer-row" key={question}>
-          <span className="question-number">
-            {String(question + 1).padStart(2, '0')}
-          </span>
+      {answers.map((answer, question) => {
+        const isIncorrect = Boolean(
+          answer && answerKey?.[question] && answer !== answerKey[question],
+        );
+
+        return (
           <div
-            className="options"
-            role="radiogroup"
-            aria-label={`Questão ${question + 1}`}
+            className={isIncorrect ? 'answer-row incorrect' : 'answer-row'}
+            key={question}
           >
-            {LETTERS.map((letter) => (
-              <button
-                aria-checked={answer === letter}
-                className={answer === letter ? 'bubble selected' : 'bubble'}
-                key={letter}
-                onClick={() => {
-                  const next = [...answers];
-                  next[question] = letter;
-                  onChange(next);
-                }}
-                role="radio"
-                type="button"
-              >
-                {letter}
-              </button>
-            ))}
+            <span className="question-number">
+              {String(question + 1).padStart(2, '0')}
+            </span>
+            <div
+              className="options"
+              role="radiogroup"
+              aria-label={`Questão ${question + 1}`}
+            >
+              {LETTERS.map((letter) => (
+                <button
+                  aria-checked={answer === letter}
+                  className={answer === letter ? 'bubble selected' : 'bubble'}
+                  key={letter}
+                  onClick={() => {
+                    const next = [...answers];
+                    next[question] = letter;
+                    onChange(next);
+                  }}
+                  role="radio"
+                  type="button"
+                >
+                  {letter}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -592,8 +603,10 @@ export default function Home() {
   const [status, setStatus] = useState('Pronto para receber a foto.');
   const [scanning, setScanning] = useState(false);
   const [activeStep, setActiveStep] = useState<1 | 2>(1);
-  const studentInput = useRef<HTMLInputElement>(null);
-  const keyInput = useRef<HTMLInputElement>(null);
+  const studentCameraInput = useRef<HTMLInputElement>(null);
+  const studentGalleryInput = useRef<HTMLInputElement>(null);
+  const keyCameraInput = useRef<HTMLInputElement>(null);
+  const keyGalleryInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let savedCount = 10;
@@ -738,6 +751,15 @@ export default function Home() {
     } finally {
       setScanning(false);
     }
+  };
+
+  const handlePhotoSelection = (
+    event: ChangeEvent<HTMLInputElement>,
+    target: 'key' | 'student',
+  ) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (file) void scan(file, target);
   };
 
   const resetStudent = () => {
@@ -886,26 +908,41 @@ export default function Home() {
             </div>
             <h3>Já tem um gabarito preenchido?</h3>
             <p>
-              Use uma foto nítida como a do exemplo, mesmo sem marcadores. Você
-              poderá revisar cada marcação reconhecida.
+              Tire uma foto nítida ou escolha uma imagem da galeria. Você poderá
+              revisar cada marcação reconhecida.
             </p>
             <input
-              ref={keyInput}
+              ref={keyCameraInput}
               hidden
               type="file"
               accept="image/*"
               capture="environment"
-              onChange={(event) =>
-                event.target.files?.[0] && scan(event.target.files[0], 'key')
-              }
+              onChange={(event) => handlePhotoSelection(event, 'key')}
             />
-            <Button
-              className="primary-action"
-              disabled={scanning}
-              onClick={() => keyInput.current?.click()}
-            >
-              <ImagePlus /> {scanning ? 'Lendo foto…' : 'Ler foto do gabarito'}
-            </Button>
+            <input
+              ref={keyGalleryInput}
+              hidden
+              type="file"
+              accept="image/*"
+              onChange={(event) => handlePhotoSelection(event, 'key')}
+            />
+            <div className="source-actions">
+              <Button
+                className="primary-action"
+                disabled={scanning}
+                onClick={() => keyCameraInput.current?.click()}
+              >
+                <Camera /> {scanning ? 'Lendo foto…' : 'Tirar foto'}
+              </Button>
+              <Button
+                className="gallery-action"
+                disabled={scanning}
+                onClick={() => keyGalleryInput.current?.click()}
+                variant="outline"
+              >
+                <ImagePlus /> Escolher da galeria
+              </Button>
+            </div>
             <div className="divider">
               <span>depois</span>
             </div>
@@ -935,27 +972,41 @@ export default function Home() {
                 <h3>Fotografe somente as respostas</h3>
                 <p>
                   Enquadre somente as linhas e as cinco alternativas. Marcadores
-                  ajudam, mas não são mais obrigatórios.
+                  ajudam, mas não são mais obrigatórios. Você também pode usar
+                  uma foto já salva no celular.
                 </p>
                 <input
-                  ref={studentInput}
+                  ref={studentCameraInput}
                   hidden
                   type="file"
                   accept="image/*"
                   capture="environment"
-                  onChange={(event) =>
-                    event.target.files?.[0] &&
-                    scan(event.target.files[0], 'student')
-                  }
+                  onChange={(event) => handlePhotoSelection(event, 'student')}
                 />
-                <Button
-                  className="primary-action"
-                  disabled={scanning}
-                  onClick={() => studentInput.current?.click()}
-                >
-                  <Camera />{' '}
-                  {scanning ? 'Analisando…' : 'Abrir câmera ou galeria'}
-                </Button>
+                <input
+                  ref={studentGalleryInput}
+                  hidden
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => handlePhotoSelection(event, 'student')}
+                />
+                <div className="source-actions">
+                  <Button
+                    className="primary-action"
+                    disabled={scanning}
+                    onClick={() => studentCameraInput.current?.click()}
+                  >
+                    <Camera /> {scanning ? 'Analisando…' : 'Tirar foto'}
+                  </Button>
+                  <Button
+                    className="gallery-action"
+                    disabled={scanning}
+                    onClick={() => studentGalleryInput.current?.click()}
+                    variant="outline"
+                  >
+                    <ImagePlus /> Escolher da galeria
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="photo-result">
@@ -1010,6 +1061,7 @@ export default function Home() {
             <AnswerGrid
               compact
               answers={studentAnswers}
+              answerKey={answerKey}
               onChange={setStudentAnswers}
             />
             {confidence.some(
