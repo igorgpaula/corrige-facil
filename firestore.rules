@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owns(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+      allow read: if owns(uid);
+      allow create, update: if owns(uid)
+        && request.resource.data.keys().hasOnly([
+          'displayName', 'email', 'updatedAt'
+        ]);
+      allow delete: if false;
+
+      match /sessions/{sessionId} {
+        allow read, delete: if owns(uid);
+        allow create: if owns(uid)
+          && request.resource.data.keys().hasOnly([
+            'title', 'className', 'subject', 'questionCount',
+            'pointsPerQuestion', 'answerKey', 'status', 'lockedAt',
+            'createdAt', 'updatedAt'
+          ])
+          && request.resource.data.questionCount is int
+          && request.resource.data.questionCount >= 1
+          && request.resource.data.questionCount <= 50
+          && request.resource.data.answerKey is list
+          && request.resource.data.answerKey.size() == request.resource.data.questionCount;
+        allow update: if owns(uid)
+          && request.resource.data.keys().hasOnly([
+            'title', 'className', 'subject', 'questionCount',
+            'pointsPerQuestion', 'answerKey', 'status', 'lockedAt',
+            'createdAt', 'updatedAt'
+          ])
+          && (resource.data.lockedAt == null
+            || request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'updatedAt']));
+
+        match /questions/{questionId} {
+          allow read: if owns(uid);
+          allow delete: if owns(uid)
+            && (!existsAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId))
+              || get(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)).data.lockedAt == null);
+          allow create, update: if owns(uid)
+            && getAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)).data.lockedAt == null
+            && request.resource.data.keys().hasOnly([
+              'id', 'order', 'prompt', 'options', 'ocrConfidence'
+            ])
+            && request.resource.data.prompt is string
+            && request.resource.data.prompt.size() <= 10000
+            && request.resource.data.options is map
+            && request.resource.data.options.keys().hasOnly([
+              'A', 'B', 'C', 'D', 'E'
+            ]);
+        }
+
+        match /corrections/{correctionId} {
+          allow read, delete: if owns(uid);
+          allow create: if owns(uid)
+            && request.resource.data.keys().hasOnly([
+              'studentLabel', 'answers', 'readings', 'correctCount',
+              'score', 'maximumScore', 'createdAt'
+            ])
+            && request.resource.data.answers is list
+            && request.resource.data.readings is list
+            && request.resource.data.answers.size() <= 50
+            && request.resource.data.readings.size() <= 50;
+          allow update: if false;
+        }
+      }
+    }
+  }
+}

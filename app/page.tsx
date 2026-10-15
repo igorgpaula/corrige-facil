@@ -1,461 +1,121 @@
 'use client';
 
-import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import {
+  type ChangeEvent,
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  Archive,
+  ArrowDown,
+  ArrowUp,
+  BarChart3,
   Camera,
   Check,
-  ChevronRight,
-  CircleHelp,
+  ChevronLeft,
+  ClipboardCheck,
+  Copy,
   FileDown,
+  FileText,
   GraduationCap,
   ImagePlus,
+  LayoutDashboard,
   LockKeyhole,
+  LogIn,
+  LogOut,
+  Plus,
   RotateCcw,
-  Sparkles,
+  Save,
+  ScanLine,
+  Trash2,
+  Upload,
+  UserRound,
+  X,
 } from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
+  getRedirectResult,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  type User,
+} from 'firebase/auth';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { calculateAnalytics } from '@/lib/analytics';
+import { auth, firebaseConfigured } from '@/lib/firebase';
+import {
+  answersFromReadings,
+  getQuestionCoordinates,
+  readAnswerSheet,
+} from '@/lib/omr';
+import { readBlankExam } from '@/lib/ocr';
+import {
+  createSession,
+  deleteCorrection,
+  deleteSession,
+  duplicateSession,
+  ensureUser,
+  listSessions,
+  loadSession,
+  saveCorrection,
+  setSessionStatus,
+  updateSessionDraft,
+} from '@/lib/repository';
+import {
+  LETTERS,
+  type AnswerReading,
+  type Answers,
+  type ExamSession,
+  type QuestionDefinition,
+  type SessionBundle,
+  type SessionDraft,
+} from '@/lib/types';
 
-const LETTERS = ['A', 'B', 'C', 'D', 'E'] as const;
-type Letter = (typeof LETTERS)[number];
-type Answers = Array<Letter | null>;
-type ScanResult = {
-  answers: Answers;
-  confidence: number[];
-  preview: string;
-  mode: 'markers' | 'free';
-};
-
-declare global {
-  interface Document {
-    modelContext?: {
-      registerTool: (
-        tool: {
-          name: string;
-          title: string;
-          description: string;
-          inputSchema: object;
-          annotations: { readOnlyHint: boolean; untrustedContentHint: boolean };
-          execute: (input: unknown) => unknown;
-        },
-        options?: { signal?: AbortSignal },
-      ) => void | Promise<void>;
-    };
-  }
-}
-
-const INITIAL_KEY: Answers = Array(10).fill(null);
 const MIN_QUESTIONS = 1;
 const MAX_QUESTIONS = 50;
+const LOCAL_USER = {
+  uid: 'local-demo',
+  displayName: 'Modo local',
+  email: null,
+  photoURL: null,
+};
 
-function resizeAnswers(answers: Answers, size: number): Answers {
-  return Array.from({ length: size }, (_, index) => answers[index] ?? null);
-}
-
-function getQuestionCoordinates(index: number, count: number) {
-  const columns = count > 25 ? 2 : 1;
-  const rows = Math.ceil(count / columns);
-  const column = Math.floor(index / rows);
-  const row = index % rows;
-  const y = rows === 1 ? 0.5 : 0.24 + (row / (rows - 1)) * 0.66;
-  const bubbleXs =
-    columns === 1
-      ? [0.38, 0.5, 0.62, 0.74, 0.86]
-      : column === 0
-        ? [0.11, 0.19, 0.27, 0.35, 0.43]
-        : [0.58, 0.66, 0.74, 0.82, 0.9];
-  return {
-    y,
-    bubbleXs,
-    numberX: columns === 1 ? 0.19 : column === 0 ? 0.045 : 0.515,
-  };
-}
+type AppUser = Pick<User, 'uid' | 'displayName' | 'email' | 'photoURL'>;
+type View = 'sessions' | 'create' | 'session';
 
 function formatScore(value: number) {
   return value.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 }
 
-function imageFromFile(file: File) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    const url = URL.createObjectURL(file);
-    image.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(image);
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('Não foi possível abrir a imagem.'));
-    };
-    image.src = url;
-  });
+function resizeAnswers(answers: Answers, size: number): Answers {
+  return Array.from({ length: size }, (_, index) => answers[index] ?? null);
 }
 
-function findRegistrationPoint(
-  pixels: Uint8ClampedArray,
-  width: number,
-  height: number,
-  area: { x0: number; x1: number; y0: number; y1: number },
-) {
-  const step = Math.max(2, Math.round(Math.min(width, height) / 350));
-  let totalX = 0;
-  let totalY = 0;
-  let weight = 0;
-
-  for (let y = Math.floor(area.y0 * height); y < area.y1 * height; y += step) {
-    for (let x = Math.floor(area.x0 * width); x < area.x1 * width; x += step) {
-      const offset = (y * width + x) * 4;
-      const gray =
-        pixels[offset] * 0.299 +
-        pixels[offset + 1] * 0.587 +
-        pixels[offset + 2] * 0.114;
-      const darkness = Math.max(0, 100 - gray);
-      if (darkness > 28) {
-        const strong = darkness * darkness;
-        totalX += x * strong;
-        totalY += y * strong;
-        weight += strong;
-      }
-    }
-  }
-
-  if (!weight) return null;
-  return { x: totalX / weight, y: totalY / weight };
-}
-
-function pixelDarkness(pixels: Uint8ClampedArray, offset: number) {
-  const gray =
-    pixels[offset] * 0.299 +
-    pixels[offset + 1] * 0.587 +
-    pixels[offset + 2] * 0.114;
-  return Math.max(0, (185 - gray) / 185);
-}
-
-function smoothSignal(signal: Float32Array, windowSize: number) {
-  const smoothed = new Float32Array(signal.length);
-  const prefix = new Float64Array(signal.length + 1);
-  for (let index = 0; index < signal.length; index += 1)
-    prefix[index + 1] = prefix[index] + signal[index];
-  const radius = Math.max(1, Math.floor(windowSize / 2));
-  for (let index = 0; index < signal.length; index += 1) {
-    const from = Math.max(0, index - radius);
-    const to = Math.min(signal.length, index + radius + 1);
-    smoothed[index] = (prefix[to] - prefix[from]) / (to - from);
-  }
-  return smoothed;
-}
-
-function sampleAnswerGrid(
-  pixels: Uint8ClampedArray,
-  width: number,
-  height: number,
-  rows: number[],
-  columns: number[],
-  radius: number,
-  thresholds = { gap: 0.055, top: 0.16, confidence: 0.38 },
-) {
-  const answers: Answers = [];
-  const confidence: number[] = [];
-  const integerRadius = Math.max(3, Math.round(radius));
-
-  for (const row of rows) {
-    const scores = columns.map((column) => {
-      let darkness = 0;
-      let samples = 0;
-      for (let dy = -integerRadius; dy <= integerRadius; dy += 1) {
-        for (let dx = -integerRadius; dx <= integerRadius; dx += 1) {
-          if (dx * dx + dy * dy > integerRadius * integerRadius) continue;
-          const x = Math.round(column + dx);
-          const y = Math.round(row + dy);
-          if (x < 0 || y < 0 || x >= width || y >= height) continue;
-          darkness += pixelDarkness(pixels, (y * width + x) * 4);
-          samples += 1;
-        }
-      }
-      return samples ? darkness / samples : 0;
-    });
-    const ranked = scores
-      .map((score, index) => ({ score, index }))
-      .sort((a, b) => b.score - a.score);
-    const gap = ranked[0].score - ranked[1].score;
-    answers.push(
-      gap > thresholds.gap && ranked[0].score > thresholds.top
-        ? LETTERS[ranked[0].index]
-        : null,
-    );
-    confidence.push(Math.max(0, Math.min(1, gap / thresholds.confidence)));
-  }
-
-  return { answers, confidence };
-}
-
-function readFreeGrid(
-  pixels: Uint8ClampedArray,
-  width: number,
-  height: number,
-  questionCount: number,
-) {
-  if (questionCount > 25) {
-    throw new Error(
-      'O modo de foto livre aceita até 25 questões. Para provas maiores, use o quadro com marcadores.',
-    );
-  }
-
-  const rowSignal = new Float32Array(height);
-  const xFrom = Math.round(width * 0.2);
-  const xTo = Math.round(width * 0.92);
-  for (let y = 0; y < height; y += 1) {
-    let total = 0;
-    for (let x = xFrom; x < xTo; x += 1)
-      total += pixelDarkness(pixels, (y * width + x) * 4);
-    rowSignal[y] = total / Math.max(1, xTo - xFrom);
-  }
-  const rowWindow = Math.max(
-    3,
-    Math.round(height / (Math.max(2, questionCount) * 7)),
-  );
-  const smoothRows = smoothSignal(rowSignal, rowWindow);
-  const rowCandidates = new Map<
-    number,
-    { score: number; step: number; rows: number[] }
-  >();
-
-  if (questionCount === 1) {
-    let bestRowScore = -Infinity;
-    let bestRow = 0;
-    for (let y = Math.round(height * 0.1); y < height * 0.95; y += 1) {
-      if (smoothRows[y] > bestRowScore) {
-        bestRowScore = smoothRows[y];
-        bestRow = y;
-      }
-    }
-    rowCandidates.set(0, {
-      score: bestRowScore,
-      step: height * 0.1,
-      rows: [bestRow],
-    });
-  } else {
-    const approximateStep = height / questionCount;
-    const minStep = Math.max(8, Math.round(approximateStep * 0.65));
-    const maxStep = Math.max(minStep, Math.round(approximateStep * 1.08));
-    const startBucketSize = Math.max(6, Math.round(height * 0.02));
-    for (let step = minStep; step <= maxStep; step += 1) {
-      const radius = Math.max(2, Math.round(step * 0.13));
-      const latestStart = Math.min(
-        Math.round(height * 0.36),
-        height - 1 - step * (questionCount - 1),
-      );
-      for (
-        let start = Math.round(height * 0.035);
-        start <= latestStart;
-        start += 1
-      ) {
-        const rows: number[] = [];
-        const strengths: number[] = [];
-        for (let row = 0; row < questionCount; row += 1) {
-          const center = start + row * step;
-          let localMaximum = 0;
-          let localMaximumY = center;
-          for (
-            let y = Math.max(0, center - radius);
-            y <= Math.min(height - 1, center + radius);
-            y += 1
-          ) {
-            if (smoothRows[y] > localMaximum) {
-              localMaximum = smoothRows[y];
-              localMaximumY = y;
-            }
-          }
-          strengths.push(localMaximum);
-          rows.push(localMaximumY);
-        }
-        const mean =
-          strengths.reduce((total, value) => total + value, 0) / questionCount;
-        const deviation = Math.sqrt(
-          strengths.reduce((total, value) => total + (value - mean) ** 2, 0) /
-            questionCount,
-        );
-        const score = mean - deviation * 0.25;
-        const bucket = Math.floor(start / startBucketSize);
-        const current = rowCandidates.get(bucket);
-        if (!current || score > current.score)
-          rowCandidates.set(bucket, { score, step, rows });
-      }
-    }
-  }
-
-  const viableRows = [...rowCandidates.values()].filter(
-    (candidate) => candidate.score >= 0.018,
-  );
-  if (!viableRows.length)
-    throw new Error(
-      'Não encontrei uma sequência regular de questões nesta foto.',
-    );
-
-  let bestGrid:
-    | (ReturnType<typeof sampleAnswerGrid> & {
-        recognized: number;
-        totalConfidence: number;
-      })
-    | null = null;
-  let foundFiveColumns = false;
-
-  for (const candidate of viableRows) {
-    const band = Math.max(3, Math.round(candidate.step * 0.22));
-    const columnSignal = new Float32Array(width);
-    for (let x = 0; x < width; x += 1) {
-      let total = 0;
-      let samples = 0;
-      for (const row of candidate.rows) {
-        for (
-          let y = Math.max(0, row - band);
-          y <= Math.min(height - 1, row + band);
-          y += 1
-        ) {
-          total += pixelDarkness(pixels, (y * width + x) * 4);
-          samples += 1;
-        }
-      }
-      columnSignal[x] = samples ? total / samples : 0;
-    }
-    const smoothColumns = smoothSignal(
-      columnSignal,
-      Math.max(3, Math.round(width * 0.018)),
-    );
-    let bestColumnScore = -Infinity;
-    let bestColumnStart = 0;
-    let bestColumnStep = 0;
-    for (
-      let step = Math.round(width * 0.055);
-      step <= width * 0.18;
-      step += 1
-    ) {
-      const latestStart = Math.min(
-        Math.round(width * 0.5),
-        width - 1 - step * 4,
-      );
-      for (
-        let start = Math.round(width * 0.2);
-        start <= latestStart;
-        start += 1
-      ) {
-        let score = 0;
-        for (let option = 0; option < 5; option += 1)
-          score += smoothColumns[start + option * step];
-        score /= 5;
-        if (score > bestColumnScore) {
-          bestColumnScore = score;
-          bestColumnStart = start;
-          bestColumnStep = step;
-        }
-      }
-    }
-
-    if (bestColumnScore < 0.025 || !bestColumnStep) continue;
-    foundFiveColumns = true;
-    const columns = Array.from(
-      { length: 5 },
-      (_, index) => bestColumnStart + index * bestColumnStep,
-    );
-    const result = sampleAnswerGrid(
-      pixels,
-      width,
-      height,
-      candidate.rows,
-      columns,
-      bestColumnStep * 0.24,
-    );
-    const recognized = result.answers.filter(Boolean).length;
-    const totalConfidence = result.confidence.reduce(
-      (total, value) => total + value,
-      0,
-    );
-    if (
-      !bestGrid ||
-      recognized > bestGrid.recognized ||
-      (recognized === bestGrid.recognized &&
-        totalConfidence > bestGrid.totalConfidence)
-    ) {
-      bestGrid = { ...result, recognized, totalConfidence };
-    }
-  }
-
-  if (!foundFiveColumns || !bestGrid)
-    throw new Error('Não encontrei as cinco colunas A–E nesta foto.');
-  return { answers: bestGrid.answers, confidence: bestGrid.confidence };
-}
-
-async function readSheet(
-  file: File,
-  questionCount: number,
-): Promise<ScanResult> {
-  const image = await imageFromFile(file);
-  const maxWidth = 1000;
-  const scale = Math.min(1, maxWidth / image.naturalWidth);
-  const width = Math.round(image.naturalWidth * scale);
-  const height = Math.round(image.naturalHeight * scale);
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) throw new Error('Seu navegador não conseguiu analisar a foto.');
-  context.drawImage(image, 0, 0, width, height);
-  const data = context.getImageData(0, 0, width, height).data;
-
-  const regions = [
-    { x0: 0, x1: 0.14, y0: 0, y1: 0.075 },
-    { x0: 0.86, x1: 1, y0: 0, y1: 0.075 },
-    { x0: 0, x1: 0.14, y0: 0.925, y1: 1 },
-    { x0: 0.86, x1: 1, y0: 0.925, y1: 1 },
-  ];
-  const found = regions.map((region) =>
-    findRegistrationPoint(data, width, height, region),
-  );
-  const preview = canvas.toDataURL('image/jpeg', 0.82);
-  if (!found.every(Boolean)) {
-    const freeResult = readFreeGrid(data, width, height, questionCount);
-    return { ...freeResult, preview, mode: 'free' };
-  }
-  const [tl, tr, bl, br] = found as Array<{ x: number; y: number }>;
-
-  const mapPoint = (u: number, v: number) => ({
-    x:
-      (1 - u) * (1 - v) * tl.x +
-      u * (1 - v) * tr.x +
-      (1 - u) * v * bl.x +
-      u * v * br.x,
-    y:
-      (1 - u) * (1 - v) * tl.y +
-      u * (1 - v) * tr.y +
-      (1 - u) * v * bl.y +
-      u * v * br.y,
-  });
-  const sheetWidth = Math.hypot(tr.x - tl.x, tr.y - tl.y);
-  const rows: number[] = [];
-  const columnsByRow: number[][] = [];
-  for (let question = 0; question < questionCount; question += 1) {
-    const { y, bubbleXs } = getQuestionCoordinates(question, questionCount);
-    const mapped = bubbleXs.map((x) => mapPoint(x, y));
-    rows.push(mapped[0].y);
-    columnsByRow.push(mapped.map((point) => point.x));
-  }
-  const answers: Answers = [];
-  const confidence: number[] = [];
-  for (let question = 0; question < questionCount; question += 1) {
-    const result = sampleAnswerGrid(
-      data,
-      width,
-      height,
-      [rows[question]],
-      columnsByRow[question],
-      Math.max(5, sheetWidth * 0.011),
-      { gap: 0.035, top: 0.12, confidence: 0.18 },
-    );
-    answers.push(result.answers[0]);
-    confidence.push(result.confidence[0]);
-  }
-  return { answers, confidence, preview, mode: 'markers' };
+function emptyQuestions(size: number): QuestionDefinition[] {
+  return Array.from({ length: size }, (_, index) => ({
+    id: `q_${index + 1}`,
+    order: index + 1,
+    prompt: '',
+    options: {},
+    ocrConfidence: null,
+  }));
 }
 
 function AnswerGrid({
@@ -463,19 +123,31 @@ function AnswerGrid({
   onChange,
   compact = false,
   answerKey,
+  readings,
 }: {
   answers: Answers;
-  onChange: (next: Answers) => void;
+  onChange: (next: Answers, question: number) => void;
   compact?: boolean;
   answerKey?: Answers;
+  readings?: AnswerReading[];
 }) {
+  const groupId = useId();
   return (
     <div className={compact ? 'answer-grid compact' : 'answer-grid'}>
       {answers.map((answer, question) => {
         const isIncorrect = Boolean(
           answer && answerKey?.[question] && answer !== answerKey[question],
         );
-
+        const reading = readings?.[question];
+        const confidenceClass = !reading?.answer
+          ? 'missing'
+          : reading.source === 'manual'
+            ? 'manual'
+            : reading.confidence >= 80
+              ? 'high'
+              : reading.confidence >= 60
+                ? 'medium'
+                : 'low';
         return (
           <div
             className={isIncorrect ? 'answer-row incorrect' : 'answer-row'}
@@ -489,23 +161,43 @@ function AnswerGrid({
               role="radiogroup"
               aria-label={`Questão ${question + 1}`}
             >
-              {LETTERS.map((letter) => (
-                <button
-                  aria-checked={answer === letter}
-                  className={answer === letter ? 'bubble selected' : 'bubble'}
-                  key={letter}
-                  onClick={() => {
-                    const next = [...answers];
-                    next[question] = letter;
-                    onChange(next);
-                  }}
-                  role="radio"
-                  type="button"
-                >
-                  {letter}
-                </button>
-              ))}
+              {LETTERS.map((letter) => {
+                const optionId = `${groupId}-${question}-${letter}`;
+                return (
+                  <label
+                    className={
+                      answer === letter ? 'bubble selected' : 'bubble'
+                    }
+                    htmlFor={optionId}
+                    key={letter}
+                  >
+                    <input
+                      checked={answer === letter}
+                      className="answer-radio"
+                      id={optionId}
+                      name={`${groupId}-question-${question}`}
+                      onChange={() => {
+                        const next = [...answers];
+                        next[question] = letter;
+                        onChange(next, question);
+                      }}
+                      type="radio"
+                      value={letter}
+                    />
+                    {letter}
+                  </label>
+                );
+              })}
             </div>
+            {reading && (
+              <span className={`confidence-badge ${confidenceClass}`}>
+                {reading.source === 'manual'
+                  ? 'Confirmada manualmente'
+                  : reading.answer
+                    ? `${reading.confidence}% confiança`
+                    : 'Não identificada'}
+              </span>
+            )}
           </div>
         );
       })}
@@ -513,18 +205,11 @@ function AnswerGrid({
   );
 }
 
-function PrintableSheet({
-  questionCount,
-  pointsPerQuestion,
-}: {
-  questionCount: number;
-  pointsPerQuestion: number;
-}) {
-  const total = questionCount * pointsPerQuestion;
-  const columns = questionCount > 25 ? 2 : 1;
-  const rows = Math.ceil(questionCount / columns);
+function PrintableSheet({ session }: { session: ExamSession }) {
+  const columns = session.questionCount > 25 ? 2 : 1;
+  const rows = Math.ceil(session.questionCount / columns);
   const cardHeight = Math.min(250, Math.max(90, 58 + rows * 7.4));
-  const printPosition = (value: number, axis: 'x' | 'y') =>
+  const position = (value: number, axis: 'x' | 'y') =>
     `${((axis === 'x' ? 0.05 : 0.04) + value * (axis === 'x' ? 0.9 : 0.92)) * 100}%`;
   return (
     <section className="print-sheet" aria-hidden="true">
@@ -537,30 +222,30 @@ function PrintableSheet({
         <div className="print-marker marker-bl" />
         <div className="print-marker marker-br" />
         <div className="print-heading">
-          <span>RESPOSTAS</span>
-          <h1>Corrige Fácil</h1>
+          <span>FOLHA DE RESPOSTAS</span>
+          <h1>{session.title}</h1>
           <div className="student-fields">
             <p>Aluno(a): __________________________________</p>
-            <p>Turma: ______________</p>
+            <p>Turma: {session.className || '______________'}</p>
           </div>
           <p className="print-config">
-            {questionCount} questões · {formatScore(pointsPerQuestion)} ponto(s)
-            cada · Total: {formatScore(total)}
+            {session.questionCount} questões ·{' '}
+            {formatScore(session.pointsPerQuestion)} ponto(s) cada
           </p>
         </div>
         <div className="print-questions">
-          {Array.from({ length: questionCount }, (_, question) => {
+          {Array.from({ length: session.questionCount }, (_, question) => {
             const { y, bubbleXs, numberX } = getQuestionCoordinates(
               question,
-              questionCount,
+              session.questionCount,
             );
             return (
               <div className="print-question" key={question}>
                 <strong
                   className="print-question-number"
                   style={{
-                    left: printPosition(numberX, 'x'),
-                    top: printPosition(y, 'y'),
+                    left: position(numberX, 'x'),
+                    top: position(y, 'y'),
                   }}
                 >
                   {String(question + 1).padStart(2, '0')}
@@ -569,8 +254,8 @@ function PrintableSheet({
                   <span
                     className="print-option"
                     style={{
-                      left: printPosition(bubbleXs[option], 'x'),
-                      top: printPosition(y, 'y'),
+                      left: position(bubbleXs[option], 'x'),
+                      top: position(y, 'y'),
                     }}
                     key={letter}
                   >
@@ -582,170 +267,763 @@ function PrintableSheet({
           })}
         </div>
         <p className="print-tip">
-          Preencha completamente um círculo. Ao fotografar, enquadre somente
-          este quadro e mantenha os quatro quadrados visíveis.
+          Preencha completamente um círculo e fotografe somente este quadro.
         </p>
       </div>
     </section>
   );
 }
 
-export default function Home() {
-  const [answerKey, setAnswerKey] = useState<Answers>(INITIAL_KEY);
-  const [studentAnswers, setStudentAnswers] = useState<Answers>(
-    Array(10).fill(null),
+function LoginScreen({ onLogin, error }: { onLogin: () => void; error: string }) {
+  return (
+    <main className="login-shell">
+      <section className="login-card">
+        <div className="brand-mark large">
+          <GraduationCap />
+        </div>
+        <p className="section-kicker">CORREÇÃO E INSIGHTS DA TURMA</p>
+        <h1>Corrige Fácil</h1>
+        <p>
+          Crie sessões, corrija pelo celular e descubra quais questões foram os
+          principais gargalos da turma.
+        </p>
+        <Button className="google-login" onClick={onLogin}>
+          <LogIn /> Entrar com Google
+        </Button>
+        {error && <p className="error-message">{error}</p>}
+        <small>
+          <LockKeyhole /> As fotos permanecem no seu aparelho.
+        </small>
+      </section>
+    </main>
   );
-  const [confidence, setConfidence] = useState<number[]>(Array(10).fill(1));
-  const [questionCount, setQuestionCount] = useState(10);
-  const [pointsPerQuestion, setPointsPerQuestion] = useState(1);
-  const [hasLoaded, setHasLoaded] = useState(false);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [status, setStatus] = useState('Pronto para receber a foto.');
-  const [scanning, setScanning] = useState(false);
-  const [activeStep, setActiveStep] = useState<1 | 2>(1);
-  const studentCameraInput = useRef<HTMLInputElement>(null);
-  const studentGalleryInput = useRef<HTMLInputElement>(null);
-  const keyCameraInput = useRef<HTMLInputElement>(null);
-  const keyGalleryInput = useRef<HTMLInputElement>(null);
+}
 
-  useEffect(() => {
-    let savedCount = 10;
+function SessionsView({
+  sessions,
+  loading,
+  onCreate,
+  onOpen,
+}: {
+  sessions: ExamSession[];
+  loading: boolean;
+  onCreate: () => void;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <section className="content-page">
+      <div className="page-title-row">
+        <div>
+          <p className="section-kicker">PAINEL DO PROFESSOR</p>
+          <h2>Minhas sessões</h2>
+          <p>
+            Uma sessão reúne a prova, as correções e os resultados de uma turma.
+          </p>
+        </div>
+        <Button className="primary-action fit" onClick={onCreate}>
+          <Plus /> Nova sessão
+        </Button>
+      </div>
+      {loading ? (
+        <div className="empty-state">
+          <ScanLine className="spin" />
+          <p>Carregando sessões…</p>
+        </div>
+      ) : sessions.length ? (
+        <div className="session-grid">
+          {sessions.map((session) => (
+            <button
+              className="session-card"
+              key={session.id}
+              onClick={() => onOpen(session.id)}
+            >
+              <div className="session-card-top">
+                <span className={`status-pill ${session.status}`}>
+                  {session.status === 'draft'
+                    ? 'Rascunho'
+                    : session.status === 'active'
+                      ? 'Em andamento'
+                      : 'Arquivada'}
+                </span>
+                <ClipboardCheck />
+              </div>
+              <h3>{session.title}</h3>
+              <p>
+                {session.className || 'Turma não informada'}
+                {session.subject ? ` · ${session.subject}` : ''}
+              </p>
+              <div className="session-meta">
+                <span>{session.questionCount} questões</span>
+                <span>
+                  Nota{' '}
+                  {formatScore(
+                    session.questionCount * session.pointsPerQuestion,
+                  )}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <LayoutDashboard />
+          <h3>Crie sua primeira sessão</h3>
+          <p>Configure manualmente ou importe uma prova em branco.</p>
+          <Button onClick={onCreate}>
+            <Plus /> Nova sessão
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CreateSessionView({
+  initialBundle,
+  onCancel,
+  onSaved,
+  userId,
+}: {
+  initialBundle?: SessionBundle | null;
+  onCancel: () => void;
+  onSaved: (bundle: SessionBundle) => void;
+  userId: string;
+}) {
+  const [title, setTitle] = useState(initialBundle?.session.title ?? '');
+  const [className, setClassName] = useState(
+    initialBundle?.session.className ?? '',
+  );
+  const [subject, setSubject] = useState(
+    initialBundle?.session.subject ?? '',
+  );
+  const [questionCount, setQuestionCount] = useState(
+    initialBundle?.session.questionCount ?? 10,
+  );
+  const [points, setPoints] = useState(
+    initialBundle?.session.pointsPerQuestion ?? 1,
+  );
+  const [answerKey, setAnswerKey] = useState<Answers>(
+    initialBundle?.session.answerKey ?? Array(10).fill(null),
+  );
+  const [questions, setQuestions] = useState(() =>
+    initialBundle?.questions ?? emptyQuestions(10),
+  );
+  const [saving, setSaving] = useState(false);
+  const [ocrStatus, setOcrStatus] = useState('');
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrRunning, setOcrRunning] = useState(false);
+  const [error, setError] = useState('');
+  const uploadInput = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const updateCount = (value: number) => {
+    const next = Math.min(
+      MAX_QUESTIONS,
+      Math.max(MIN_QUESTIONS, Math.round(value || 1)),
+    );
+    setQuestionCount(next);
+    setAnswerKey((current) => resizeAnswers(current, next));
+    setQuestions((current) =>
+      Array.from({ length: next }, (_, index) =>
+        current[index] ?? {
+          id: `q_${index + 1}`,
+          order: index + 1,
+          prompt: '',
+          options: {},
+          ocrConfidence: null,
+        },
+      ).map((item, index) => ({
+        ...item,
+        id: `q_${index + 1}`,
+        order: index + 1,
+      })),
+    );
+  };
+
+  const handleBlankExam = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setOcrRunning(true);
+    setError('');
     try {
-      const settings = JSON.parse(
-        window.localStorage.getItem('corrige-facil-config') ?? '{}',
-      ) as { questionCount?: number; pointsPerQuestion?: number };
-      savedCount = Math.min(
-        MAX_QUESTIONS,
-        Math.max(MIN_QUESTIONS, Math.round(settings.questionCount ?? 10)),
+      const extracted = await readBlankExam(
+        file,
+        controller.signal,
+        (progress) => {
+          setOcrProgress(progress.progress * 100);
+          setOcrStatus(progress.message);
+        },
       );
-      setQuestionCount(savedCount);
-      setPointsPerQuestion(Math.max(0.01, settings.pointsPerQuestion ?? 1));
-    } catch {
-      /* usa a configuração padrão */
+      setQuestions(extracted);
+      setQuestionCount(extracted.length);
+      setAnswerKey(Array(extracted.length).fill(null));
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError')
+        setOcrStatus('Leitura cancelada.');
+      else
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : 'Não foi possível ler a prova.',
+        );
+    } finally {
+      setOcrRunning(false);
+      abortRef.current = null;
     }
+  };
+
+  const updateQuestion = (
+    index: number,
+    patch: Partial<QuestionDefinition>,
+  ) => {
+    setQuestions((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item,
+      ),
+    );
+  };
+
+  const removeQuestion = (index: number) => {
+    if (questions.length === 1) return;
+    const next = questions
+      .filter((_, itemIndex) => itemIndex !== index)
+      .map((item, itemIndex) => ({
+        ...item,
+        id: `q_${itemIndex + 1}`,
+        order: itemIndex + 1,
+      }));
+    setQuestions(next);
+    setQuestionCount(next.length);
+    setAnswerKey((current) =>
+      current.filter((_, itemIndex) => itemIndex !== index),
+    );
+  };
+
+  const addQuestion = () => {
+    if (questions.length < MAX_QUESTIONS) updateCount(questions.length + 1);
+  };
+
+  const moveQuestion = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= questions.length) return;
+    setQuestions((current) => {
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next.map((item, itemIndex) => ({
+        ...item,
+        id: `q_${itemIndex + 1}`,
+        order: itemIndex + 1,
+      }));
+    });
+    setAnswerKey((current) => {
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const importLocalKey = () => {
     try {
       const parsed = JSON.parse(
         window.localStorage.getItem('corrige-facil-gabarito') ?? '[]',
       ) as Answers;
-      setAnswerKey(resizeAnswers(parsed, savedCount));
+      if (parsed.length && parsed.every(Boolean)) {
+        updateCount(parsed.length);
+        setAnswerKey(parsed);
+      }
     } catch {
-      setAnswerKey(Array(savedCount).fill(null));
+      setError('O gabarito antigo deste aparelho não pôde ser importado.');
     }
-    setStudentAnswers(Array(savedCount).fill(null));
-    setConfidence(Array(savedCount).fill(1));
-    setHasLoaded(true);
-  }, []);
-  useEffect(() => {
-    if (!hasLoaded) return;
-    window.localStorage.setItem(
-      'corrige-facil-gabarito',
-      JSON.stringify(answerKey),
-    );
-    window.localStorage.setItem(
-      'corrige-facil-config',
-      JSON.stringify({ questionCount, pointsPerQuestion }),
-    );
-  }, [answerKey, hasLoaded, pointsPerQuestion, questionCount]);
-
-  useEffect(() => {
-    const context = document.modelContext;
-    if (!context?.registerTool) return;
-    const lifecycle = new AbortController();
-    const allowed = new Set(LETTERS);
-    const register = context.registerTool(
-      {
-        name: 'set_answer_key',
-        title: 'Definir gabarito',
-        description: `Define as ${questionCount} respostas do gabarito oficial e mostra a etapa de conferência.`,
-        inputSchema: {
-          type: 'object',
-          properties: {
-            answers: {
-              type: 'array',
-              minItems: questionCount,
-              maxItems: questionCount,
-              items: { type: 'string', enum: LETTERS },
-            },
-          },
-          required: ['answers'],
-          additionalProperties: false,
-        },
-        annotations: { readOnlyHint: false, untrustedContentHint: false },
-        execute(input) {
-          const candidate = (input as { answers?: unknown })?.answers;
-          if (
-            !Array.isArray(candidate) ||
-            candidate.length !== questionCount ||
-            !candidate.every((item) => allowed.has(item as Letter))
-          ) {
-            throw new Error(
-              `Informe exatamente ${questionCount} alternativas entre A e E.`,
-            );
-          }
-          const next = candidate as Letter[];
-          setAnswerKey(next);
-          setActiveStep(1);
-          return { saved: true, answers: next };
-        },
-      },
-      { signal: lifecycle.signal },
-    );
-    Promise.resolve(register).catch(() => undefined);
-    return () => lifecycle.abort();
-  }, [questionCount]);
-
-  const correct = studentAnswers.filter(
-    (answer, index) => answer && answer === answerKey[index],
-  ).length;
-  const answered = studentAnswers.filter(Boolean).length;
-  const grade = correct * pointsPerQuestion;
-  const totalPoints = questionCount * pointsPerQuestion;
-  const scorePercent = questionCount ? (correct / questionCount) * 100 : 0;
-  const keyComplete = answerKey.every(Boolean);
-
-  const updateQuestionCount = (value: number) => {
-    const nextCount = Math.min(
-      MAX_QUESTIONS,
-      Math.max(MIN_QUESTIONS, Math.round(value || MIN_QUESTIONS)),
-    );
-    setQuestionCount(nextCount);
-    setAnswerKey((current) => resizeAnswers(current, nextCount));
-    setStudentAnswers((current) => resizeAnswers(current, nextCount));
-    setConfidence((current) =>
-      Array.from({ length: nextCount }, (_, index) => current[index] ?? 1),
-    );
-    setPreview(null);
-    setStatus('Configuração atualizada. Confira o gabarito.');
   };
 
-  const scan = async (file: File, target: 'key' | 'student') => {
+  const submit = async () => {
+    if (!title.trim() || !className.trim()) {
+      setError('Informe o nome da sessão e a turma.');
+      return;
+    }
+    if (!answerKey.every(Boolean)) {
+      setError('Preencha todas as respostas do gabarito oficial.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const draft: SessionDraft = {
+        title: title.trim(),
+        className: className.trim(),
+        subject: subject.trim(),
+        questionCount,
+        pointsPerQuestion: points,
+        answerKey,
+        questions,
+      };
+      onSaved(
+        initialBundle
+          ? await updateSessionDraft(userId, initialBundle.session.id, draft)
+          : await createSession(userId, draft),
+      );
+    } catch (cause) {
+      setError(
+          cause instanceof Error ? cause.message : 'Não foi possível salvar a sessão.',
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="content-page create-page">
+      <button className="back-link" onClick={onCancel}>
+        <ChevronLeft /> {initialBundle ? 'Voltar à sessão' : 'Minhas sessões'}
+      </button>
+      <div className="page-title-row">
+        <div>
+          <p className="section-kicker">
+            {initialBundle ? 'EDITAR RASCUNHO' : 'NOVA SESSÃO'}
+          </p>
+          <h2>{initialBundle ? 'Revise a configuração' : 'Configure a prova'}</h2>
+          <p>Você pode preencher manualmente ou importar a prova em branco.</p>
+        </div>
+      </div>
+      <div className="create-layout">
+        <div className="panel form-panel">
+          <h3>Identificação</h3>
+          <div className="form-grid">
+            <label htmlFor="session-title">
+              Nome da sessão
+              <Input
+                id="session-title"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Ex.: Avaliação de Matemática"
+              />
+            </label>
+            <label htmlFor="session-class">
+              Turma
+              <Input
+                id="session-class"
+                value={className}
+                onChange={(event) => setClassName(event.target.value)}
+                placeholder="Ex.: 7º A"
+              />
+            </label>
+            <label htmlFor="session-subject">
+              Disciplina (opcional)
+              <Input
+                id="session-subject"
+                value={subject}
+                onChange={(event) => setSubject(event.target.value)}
+                placeholder="Ex.: Matemática"
+              />
+            </label>
+            <label htmlFor="session-question-count">
+              Número de questões
+              <Input
+                id="session-question-count"
+                type="number"
+                min={1}
+                max={50}
+                value={questionCount}
+                onChange={(event) => updateCount(Number(event.target.value))}
+              />
+            </label>
+            <label htmlFor="session-points">
+              Valor de cada questão
+              <Input
+                id="session-points"
+                type="number"
+                min="0.01"
+                step="0.1"
+                value={points}
+                onChange={(event) =>
+                  setPoints(Math.max(0.01, Number(event.target.value) || 1))
+                }
+              />
+            </label>
+            <div className="total-preview">
+              <span>Nota máxima</span>
+              <strong>{formatScore(questionCount * points)}</strong>
+            </div>
+          </div>
+        </div>
+        <aside className="panel import-panel">
+          <FileText />
+          <h3>Importar prova em branco</h3>
+          <p>
+            PDF, JPG ou PNG. O texto é lido neste aparelho e o arquivo original
+            é descartado.
+          </p>
+          <input
+            ref={uploadInput}
+            hidden
+            type="file"
+            accept="application/pdf,image/jpeg,image/png"
+            onChange={handleBlankExam}
+          />
+          <Button
+            className="primary-action"
+            disabled={ocrRunning}
+            onClick={() => uploadInput.current?.click()}
+          >
+            <Upload /> {ocrRunning ? 'Lendo prova…' : 'Escolher arquivo'}
+          </Button>
+          {ocrRunning && (
+            <Button variant="outline" onClick={() => abortRef.current?.abort()}>
+              <X /> Cancelar
+            </Button>
+          )}
+          {ocrStatus && (
+            <div className="progress-block">
+              <div>
+                <span style={{ width: `${ocrProgress}%` }} />
+              </div>
+              <p>{ocrStatus}</p>
+            </div>
+          )}
+        </aside>
+      </div>
+
+      <div className="panel question-editor">
+        <div className="editor-heading">
+          <div>
+            <h3>Questões</h3>
+            <p>Revise o texto extraído. O gabarito é definido separadamente.</p>
+          </div>
+          <Button variant="outline" onClick={addQuestion}>
+            <Plus /> Adicionar questão
+          </Button>
+        </div>
+        {questions.map((question, index) => (
+          <details
+            className={
+              question.ocrConfidence !== null &&
+              question.ocrConfidence < 0.75
+                ? 'question-card low-ocr'
+                : 'question-card'
+            }
+            key={question.id}
+            open={index < 2}
+          >
+            <summary>
+              <strong>Questão {question.order}</strong>
+              <span>{question.prompt || 'Sem enunciado'}</span>
+              {question.ocrConfidence !== null && (
+                <em>{Math.round(question.ocrConfidence * 100)}% OCR</em>
+              )}
+            </summary>
+            <div className="question-fields">
+              <label htmlFor={`question-${index}-prompt`}>
+                Enunciado
+                <textarea
+                  id={`question-${index}-prompt`}
+                  value={question.prompt}
+                  onChange={(event) =>
+                    updateQuestion(index, { prompt: event.target.value })
+                  }
+                />
+              </label>
+              <div className="option-editor">
+                {LETTERS.map((letter) => (
+                  <label
+                    htmlFor={`question-${index}-option-${letter}`}
+                    key={letter}
+                  >
+                    <span>{letter}</span>
+                    <Input
+                      id={`question-${index}-option-${letter}`}
+                      value={question.options[letter] ?? ''}
+                      onChange={(event) =>
+                        updateQuestion(index, {
+                          options: {
+                            ...question.options,
+                            [letter]: event.target.value,
+                          },
+                        })
+                      }
+                      placeholder={`Alternativa ${letter}`}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="question-actions">
+                <Button
+                  aria-label={`Mover questão ${index + 1} para cima`}
+                  disabled={index === 0}
+                  size="icon"
+                  variant="outline"
+                  onClick={() => moveQuestion(index, -1)}
+                >
+                  <ArrowUp />
+                </Button>
+                <Button
+                  aria-label={`Mover questão ${index + 1} para baixo`}
+                  disabled={index === questions.length - 1}
+                  size="icon"
+                  variant="outline"
+                  onClick={() => moveQuestion(index, 1)}
+                >
+                  <ArrowDown />
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => removeQuestion(index)}
+                >
+                  <Trash2 /> Remover questão
+                </Button>
+              </div>
+            </div>
+          </details>
+        ))}
+      </div>
+
+      <div className="panel key-panel">
+        <div className="editor-heading">
+          <div>
+            <h3>Gabarito oficial</h3>
+            <p>Marque uma resposta correta para cada questão.</p>
+          </div>
+          <Button variant="outline" onClick={importLocalKey}>
+            <RotateCcw /> Importar gabarito antigo
+          </Button>
+        </div>
+        <AnswerGrid
+          answers={answerKey}
+          onChange={(next) => setAnswerKey(next)}
+        />
+      </div>
+      {error && <p className="error-message centered">{error}</p>}
+      <div className="sticky-actions">
+        <Button variant="outline" onClick={onCancel}>
+          Cancelar
+        </Button>
+        <Button
+          className="primary-action fit"
+          disabled={saving || ocrRunning}
+          onClick={submit}
+        >
+          <Save />{' '}
+          {saving
+            ? 'Salvando…'
+            : initialBundle
+              ? 'Salvar alterações'
+              : 'Criar sessão'}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function AnalyticsPanel({ bundle }: { bundle: SessionBundle }) {
+  const analytics = useMemo(
+    () =>
+      calculateAnalytics(
+        bundle.session,
+        bundle.questions,
+        bundle.corrections,
+      ),
+    [bundle],
+  );
+  const questionChart = analytics.questionStats.map((item) => ({
+    name: `Q${item.order}`,
+    acerto: Math.round(item.accuracy * 100),
+  }));
+  return (
+    <div className="analytics-layout">
+      <div className="metric-grid">
+        <div className="metric-card">
+          <span>Provas corrigidas</span>
+          <strong>{analytics.total}</strong>
+        </div>
+        <div className="metric-card">
+          <span>Média da turma</span>
+          <strong>{formatScore(analytics.average)}</strong>
+        </div>
+        <div className="metric-card">
+          <span>Mediana</span>
+          <strong>{formatScore(analytics.median)}</strong>
+        </div>
+        <div className="metric-card">
+          <span>Nota máxima</span>
+          <strong>
+            {formatScore(
+              bundle.session.questionCount * bundle.session.pointsPerQuestion,
+            )}
+          </strong>
+        </div>
+      </div>
+      {!analytics.total ? (
+        <div className="empty-state">
+          <BarChart3 />
+          <h3>Ainda não há dados</h3>
+          <p>Salve a primeira correção para gerar os insights da turma.</p>
+        </div>
+      ) : (
+        <>
+          <div className="analytics-grid">
+            <article className="panel chart-panel">
+              <h3>Acerto por questão</h3>
+              <p>Percentual de alunos que acertaram cada item.</p>
+              <div className="chart-box">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={questionChart}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" />
+                    <YAxis domain={[0, 100]} unit="%" />
+                    <Tooltip formatter={(value) => `${String(value)}%`} />
+                    <Bar
+                      dataKey="acerto"
+                      fill="#087b76"
+                      radius={[5, 5, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </article>
+            <article className="panel chart-panel">
+              <h3>Distribuição das notas</h3>
+              <p>Quantidade de provas por faixa percentual.</p>
+              <div className="chart-box">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={analytics.distribution}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="label" interval={1} />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Bar
+                      dataKey="count"
+                      name="Provas"
+                      fill="#e7a63e"
+                      radius={[5, 5, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </article>
+          </div>
+          <div className="insight-grid">
+            <article className="panel insight-card bottleneck">
+              <h3>Principais gargalos</h3>
+              {analytics.bottlenecks.map((item) => (
+                <div key={item.order}>
+                  <strong>
+                    Questão {item.order} · {Math.round(item.accuracy * 100)}%
+                  </strong>
+                  <p>{item.prompt || 'Enunciado não informado.'}</p>
+                  <small>
+                    {item.mostCommonWrong
+                      ? `Alternativa incorreta mais marcada: ${item.mostCommonWrong}`
+                      : 'Sem alternativa incorreta predominante.'}
+                  </small>
+                </div>
+              ))}
+            </article>
+            <article className="panel insight-card strength">
+              <h3>Melhores resultados</h3>
+              {analytics.strengths.map((item) => (
+                <div key={item.order}>
+                  <strong>
+                    Questão {item.order} · {Math.round(item.accuracy * 100)}%
+                  </strong>
+                  <p>{item.prompt || 'Enunciado não informado.'}</p>
+                  <small>
+                    {item.correct} de {item.total} acertos
+                  </small>
+                </div>
+              ))}
+            </article>
+          </div>
+          <article className="panel question-table">
+            <h3>Detalhamento por questão</h3>
+            {analytics.questionStats.map((item) => (
+              <details key={item.order}>
+                <summary>
+                  <strong>Q{item.order}</strong>
+                  <span>{item.prompt || 'Sem enunciado'}</span>
+                  <b>{Math.round(item.accuracy * 100)}% de acerto</b>
+                </summary>
+                <div className="option-distribution">
+                  {[...LETTERS, 'blank' as const].map((letter) => (
+                    <span key={letter}>
+                      <i>{letter === 'blank' ? 'Em branco' : letter}</i>
+                      <strong>{item.optionCounts[letter]}</strong>
+                    </span>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </article>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CorrectionPanel({
+  bundle,
+  userId,
+  onReload,
+}: {
+  bundle: SessionBundle;
+  userId: string;
+  onReload: () => Promise<void>;
+}) {
+  const count = bundle.session.questionCount;
+  const [readings, setReadings] = useState<AnswerReading[]>(
+    Array.from({ length: count }, () => ({
+      answer: null,
+      confidence: 0,
+      source: 'scan',
+    })),
+  );
+  const [preview, setPreview] = useState<string | null>(null);
+  const [status, setStatus] = useState('Pronto para receber a foto.');
+  const [scanning, setScanning] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [studentLabel, setStudentLabel] = useState('');
+  const cameraInput = useRef<HTMLInputElement>(null);
+  const galleryInput = useRef<HTMLInputElement>(null);
+  const answers = answersFromReadings(readings);
+  const correct = answers.filter(
+    (answer, index) => answer && answer === bundle.session.answerKey[index],
+  ).length;
+  const score = correct * bundle.session.pointsPerQuestion;
+
+  const reset = () => {
+    setReadings(
+      Array.from({ length: count }, () => ({
+        answer: null,
+        confidence: 0,
+        source: 'scan',
+      })),
+    );
+    setPreview(null);
+    setStudentLabel('');
+    setStatus('Pronto para receber uma nova foto.');
+  };
+
+  const handlePhoto = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
     setScanning(true);
     setStatus('Analisando marcações no seu aparelho…');
     try {
-      const result = await readSheet(file, questionCount);
-      if (target === 'key') {
-        setAnswerKey(result.answers);
-        setStatus(
-          result.mode === 'free'
-            ? 'Gabarito detectado em modo livre. Confira as respostas.'
-            : 'Gabarito lido pelos marcadores. Confira as respostas.',
-        );
-        setActiveStep(1);
-      } else {
-        setStudentAnswers(result.answers);
-        setConfidence(result.confidence);
-        setPreview(result.preview);
-        setStatus(
-          result.mode === 'free'
-            ? 'Respostas detectadas em modo livre. Revise antes de registrar a nota.'
-            : 'Correção concluída pelos marcadores. Revise os itens destacados.',
-        );
-        setActiveStep(2);
-      }
-    } catch (error) {
+      const result = await readAnswerSheet(file, count);
+      setReadings(result.readings);
+      setPreview(result.preview);
       setStatus(
-        error instanceof Error
-          ? error.message
+        result.mode === 'free'
+          ? 'Leitura livre concluída. Revise as respostas e a confiança.'
+          : 'Leitura pelos marcadores concluída. Revise antes de salvar.',
+      );
+    } catch (cause) {
+      setStatus(
+        cause instanceof Error
+          ? cause.message
           : 'Não foi possível analisar a foto.',
       );
     } finally {
@@ -753,337 +1031,519 @@ export default function Home() {
     }
   };
 
-  const handlePhotoSelection = (
-    event: ChangeEvent<HTMLInputElement>,
-    target: 'key' | 'student',
-  ) => {
-    const file = event.currentTarget.files?.[0];
-    event.currentTarget.value = '';
-    if (file) void scan(file, target);
+  const changeAnswers = (next: Answers, question: number) => {
+    setReadings((current) =>
+      current.map((reading, index) =>
+        index === question
+          ? { answer: next[index], confidence: 100, source: 'manual' }
+          : reading,
+      ),
+    );
   };
 
-  const resetStudent = () => {
-    setStudentAnswers(Array(questionCount).fill(null));
-    setConfidence(Array(questionCount).fill(1));
-    setPreview(null);
-    setStatus('Pronto para receber uma nova foto.');
+  const save = async () => {
+    setSaving(true);
+    try {
+      await saveCorrection(userId, bundle.session.id, {
+        studentLabel: studentLabel.trim() || null,
+        answers,
+        readings,
+        correctCount: correct,
+        score,
+        maximumScore: count * bundle.session.pointsPerQuestion,
+      });
+      reset();
+      setStatus('Correção salva. Pronto para o próximo aluno.');
+      await onReload();
+    } catch (cause) {
+      setStatus(
+        cause instanceof Error
+          ? cause.message
+          : 'Não foi possível salvar a correção.',
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand-mark">
-          <GraduationCap aria-hidden="true" />
-        </div>
-        <div>
-          <p className="eyebrow">CORREÇÃO NO PRÓPRIO APARELHO</p>
-          <h1>Corrige Fácil</h1>
-        </div>
-        <div className="privacy-pill">
-          <LockKeyhole aria-hidden="true" /> Sem envio de fotos
-        </div>
-      </header>
-
-      <section className="intro-row">
-        <div>
-          <p className="section-kicker">
-            GABARITO ÓPTICO · {questionCount} QUESTÕES
-          </p>
-          <h2>Da foto à nota, em segundos.</h2>
-          <p>
-            Configure a prova, marque o gabarito e fotografe a folha do aluno.
-          </p>
-        </div>
-        <Button
-          className="print-button"
-          variant="outline"
-          onClick={() => window.print()}
-        >
-          <FileDown /> Imprimir quadro de respostas
-        </Button>
-      </section>
-
-      <section className="exam-settings" aria-label="Configuração da prova">
-        <div className="setting-copy">
-          <span>CONFIGURAÇÃO</span>
-          <strong>Como será calculada a nota?</strong>
-        </div>
-        <label className="setting-field" htmlFor="question-count">
-          <span>Número de questões</span>
-          <Input
-            id="question-count"
-            min={MIN_QUESTIONS}
-            max={MAX_QUESTIONS}
-            inputMode="numeric"
-            type="number"
-            value={questionCount}
-            onChange={(event) =>
-              updateQuestionCount(Number(event.target.value))
-            }
-          />
-        </label>
-        <label className="setting-field" htmlFor="points-per-question">
-          <span>Valor de cada questão</span>
-          <div className="points-input">
-            <Input
-              id="points-per-question"
-              min="0.01"
-              step="0.1"
-              inputMode="decimal"
-              type="number"
-              value={pointsPerQuestion}
-              onChange={(event) =>
-                setPointsPerQuestion(
-                  Math.max(0.01, Number(event.target.value) || 0.01),
-                )
-              }
-            />
-            <small>ponto(s)</small>
-          </div>
-        </label>
-        <div className="total-card">
-          <span>Nota máxima</span>
-          <strong>{formatScore(totalPoints)}</strong>
-        </div>
-      </section>
-
-      <nav className="stepper" aria-label="Etapas da correção">
-        <button
-          className={activeStep === 1 ? 'step active' : 'step done'}
-          onClick={() => setActiveStep(1)}
-          type="button"
-        >
-          <span>{activeStep === 2 ? <Check /> : '1'}</span>
-          <div>
-            <strong>Gabarito</strong>
-            <small>Defina as respostas</small>
-          </div>
-        </button>
-        <ChevronRight aria-hidden="true" />
-        <button
-          className={activeStep === 2 ? 'step active' : 'step'}
-          disabled={!keyComplete}
-          onClick={() => setActiveStep(2)}
-          type="button"
-        >
-          <span>2</span>
-          <div>
-            <strong>Corrigir</strong>
-            <small>Fotografe e revise</small>
-          </div>
-        </button>
-      </nav>
-
-      {activeStep === 1 ? (
-        <section className="workspace key-workspace">
-          <article className="panel answer-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="panel-index">01</span>
-                <div>
-                  <h3>Gabarito oficial</h3>
-                  <p>Toque em uma alternativa por questão.</p>
-                </div>
-              </div>
-              <span className="save-state">
-                <Check /> salvo neste aparelho
-              </span>
+    <div className="correction-layout">
+      <article className="panel camera-panel">
+        {!preview ? (
+          <div className="camera-empty">
+            <div className="camera-icon">
+              <Camera />
             </div>
-            <AnswerGrid answers={answerKey} onChange={setAnswerKey} />
-          </article>
-          <aside className="panel action-panel">
-            <div className="scan-illustration" aria-hidden="true">
-              <div className="sheet-mini">
-                {[0, 1, 2, 3, 4].map((row) => (
-                  <span key={row}>
-                    <i />
-                    <i />
-                    <i className={row === 1 ? 'filled' : ''} />
-                    <i />
-                    <i />
-                  </span>
-                ))}
-              </div>
-              <Sparkles />
-            </div>
-            <h3>Já tem um gabarito preenchido?</h3>
+            <h3>Fotografe somente as respostas</h3>
             <p>
-              Tire uma foto nítida ou escolha uma imagem da galeria. Você poderá
-              revisar cada marcação reconhecida.
+              Enquadre as linhas e as alternativas. A imagem será descartada
+              depois da revisão.
             </p>
             <input
-              ref={keyCameraInput}
+              ref={cameraInput}
               hidden
               type="file"
               accept="image/*"
               capture="environment"
-              onChange={(event) => handlePhotoSelection(event, 'key')}
+              onChange={handlePhoto}
             />
             <input
-              ref={keyGalleryInput}
+              ref={galleryInput}
               hidden
               type="file"
               accept="image/*"
-              onChange={(event) => handlePhotoSelection(event, 'key')}
+              onChange={handlePhoto}
             />
             <div className="source-actions">
               <Button
                 className="primary-action"
                 disabled={scanning}
-                onClick={() => keyCameraInput.current?.click()}
+                onClick={() => cameraInput.current?.click()}
               >
-                <Camera /> {scanning ? 'Lendo foto…' : 'Tirar foto'}
+                <Camera /> {scanning ? 'Analisando…' : 'Tirar foto'}
               </Button>
               <Button
                 className="gallery-action"
-                disabled={scanning}
-                onClick={() => keyGalleryInput.current?.click()}
                 variant="outline"
+                disabled={scanning}
+                onClick={() => galleryInput.current?.click()}
               >
                 <ImagePlus /> Escolher da galeria
               </Button>
             </div>
-            <div className="divider">
-              <span>depois</span>
+          </div>
+        ) : (
+          <div className="photo-result">
+            {/* oxlint-disable-next-line next/no-img-element -- object URL local, discarded after review */}
+            <img src={preview} alt="Foto analisada" />
+            <div className="photo-badge">
+              <Check /> Foto analisada
             </div>
-            <Button
-              className="continue-action"
-              disabled={!keyComplete}
-              onClick={() => setActiveStep(2)}
-            >
-              Corrigir uma prova <ChevronRight />
-            </Button>
-            <p className="microcopy">
-              <CircleHelp />{' '}
-              {keyComplete
-                ? 'Com ou sem marcadores, enquadre somente as linhas e as cinco alternativas.'
-                : `Complete as ${questionCount} respostas para liberar a correção.`}
-            </p>
-          </aside>
-        </section>
-      ) : (
-        <section className="workspace correction-workspace">
-          <article className="panel camera-panel">
-            {!preview ? (
-              <div className="camera-empty">
-                <div className="camera-icon">
-                  <Camera />
-                </div>
-                <h3>Fotografe somente as respostas</h3>
-                <p>
-                  Enquadre somente as linhas e as cinco alternativas. Marcadores
-                  ajudam, mas não são mais obrigatórios. Você também pode usar
-                  uma foto já salva no celular.
-                </p>
-                <input
-                  ref={studentCameraInput}
-                  hidden
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={(event) => handlePhotoSelection(event, 'student')}
-                />
-                <input
-                  ref={studentGalleryInput}
-                  hidden
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => handlePhotoSelection(event, 'student')}
-                />
-                <div className="source-actions">
-                  <Button
-                    className="primary-action"
-                    disabled={scanning}
-                    onClick={() => studentCameraInput.current?.click()}
-                  >
-                    <Camera /> {scanning ? 'Analisando…' : 'Tirar foto'}
-                  </Button>
-                  <Button
-                    className="gallery-action"
-                    disabled={scanning}
-                    onClick={() => studentGalleryInput.current?.click()}
-                    variant="outline"
-                  >
-                    <ImagePlus /> Escolher da galeria
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="photo-result">
-                <img src={preview} alt="Foto da folha de respostas analisada" />
-                <div className="photo-badge">
-                  <Check /> Foto analisada
-                </div>
-              </div>
-            )}
-            <p className="status-line" aria-live="polite">
-              {status}
-            </p>
-          </article>
-          <aside className="panel result-panel">
-            <div className="result-top">
-              <div>
-                <span className="panel-index">02</span>
-                <div>
-                  <h3>Resultado</h3>
-                  <p>
-                    {answered}/{questionCount} respostas identificadas
-                  </p>
-                </div>
-              </div>
-              <Button
-                aria-label="Limpar correção"
-                size="icon"
-                variant="ghost"
-                onClick={resetStudent}
-              >
-                <RotateCcw />
-              </Button>
+          </div>
+        )}
+        <p className="status-line" aria-live="polite">
+          {status}
+        </p>
+      </article>
+      <aside className="panel result-panel">
+        <div className="result-top">
+          <div>
+            <span className="panel-index">02</span>
+            <div>
+              <h3>Resultado</h3>
+              <p>
+                {answers.filter(Boolean).length}/{count} respostas identificadas
+              </p>
             </div>
-            <div
-              className="grade-ring"
-              style={{ '--score': `${scorePercent}%` } as React.CSSProperties}
-            >
-              <div>
-                <strong>{formatScore(grade)}</strong>
-                <span>de {formatScore(totalPoints)}</span>
-              </div>
-            </div>
-            <div className="score-summary">
-              <span>
-                <b>{correct}</b> acertos
-              </span>
-              <span>
-                <b>{questionCount - correct}</b> erros ou vazias
-              </span>
-            </div>
-            <h4>Revisão das respostas</h4>
-            <AnswerGrid
-              compact
-              answers={studentAnswers}
-              answerKey={answerKey}
-              onChange={setStudentAnswers}
+          </div>
+          <Button
+            aria-label="Limpar correção"
+            size="icon"
+            variant="ghost"
+            onClick={reset}
+          >
+            <RotateCcw />
+          </Button>
+        </div>
+        <div
+          className="grade-ring"
+          style={
+            {
+              '--score': `${count ? (correct / count) * 100 : 0}%`,
+            } as CSSProperties
+          }
+        >
+          <div>
+            <strong>{formatScore(score)}</strong>
+            <span>
+              de {formatScore(count * bundle.session.pointsPerQuestion)}
+            </span>
+          </div>
+        </div>
+        <div className="student-field">
+          <label htmlFor="student-label">
+            Aluno ou código (opcional)
+            <Input
+              id="student-label"
+              value={studentLabel}
+              onChange={(event) => setStudentLabel(event.target.value)}
+              placeholder="Ex.: Ana ou 2026-014"
             />
-            {confidence.some(
-              (value, index) => value < 0.35 && studentAnswers[index],
-            ) && (
-              <p className="review-warning">
-                Algumas marcações têm baixa confiança. Confira a foto e ajuste
-                tocando na alternativa correta.
+          </label>
+        </div>
+        <h4>Revisão das respostas</h4>
+        <AnswerGrid
+          compact
+          answers={answers}
+          readings={readings}
+          answerKey={bundle.session.answerKey}
+          onChange={changeAnswers}
+        />
+        <Button
+          className="primary-action save-correction"
+          disabled={saving || !answers.some(Boolean)}
+          onClick={save}
+        >
+          <Save /> {saving ? 'Salvando…' : 'Salvar correção'}
+        </Button>
+      </aside>
+    </div>
+  );
+}
+
+function SessionWorkspace({
+  initialBundle,
+  userId,
+  onBack,
+  onChanged,
+  onEdit,
+}: {
+  initialBundle: SessionBundle;
+  userId: string;
+  onBack: () => void;
+  onChanged: () => void;
+  onEdit: (bundle: SessionBundle) => void;
+}) {
+  const [bundle, setBundle] = useState(initialBundle);
+  const [tab, setTab] = useState<'correct' | 'analytics' | 'settings'>(
+    'correct',
+  );
+  const [busy, setBusy] = useState(false);
+  const reload = useCallback(async () => {
+    const next = await loadSession(userId, bundle.session.id);
+    if (next) setBundle(next);
+  }, [bundle.session.id, userId]);
+
+  const removeCorrection = async (id: string) => {
+    if (
+      !window.confirm(
+        'Excluir esta correção? As estatísticas serão recalculadas.',
+      )
+    )
+      return;
+    await deleteCorrection(userId, bundle.session.id, id);
+    await reload();
+  };
+
+  const duplicate = async () => {
+    setBusy(true);
+    try {
+      await duplicateSession(userId, bundle);
+      onChanged();
+      onBack();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const archive = async () => {
+    const nextStatus =
+      bundle.session.status === 'archived' ? 'active' : 'archived';
+    await setSessionStatus(userId, bundle.session.id, nextStatus);
+    await reload();
+    onChanged();
+  };
+
+  const remove = async () => {
+    if (
+      !window.confirm(
+        'Excluir a sessão e todas as correções? Esta ação não pode ser desfeita.',
+      )
+    )
+      return;
+    await deleteSession(userId, bundle.session.id);
+    onChanged();
+    onBack();
+  };
+
+  return (
+    <section className="content-page session-page">
+      <button className="back-link" onClick={onBack}>
+        <ChevronLeft /> Minhas sessões
+      </button>
+      <div className="session-header">
+        <div>
+          <span className={`status-pill ${bundle.session.status}`}>
+            {bundle.session.status === 'draft'
+              ? 'Rascunho'
+              : bundle.session.status === 'active'
+                ? 'Em andamento'
+                : 'Arquivada'}
+          </span>
+          <h2>{bundle.session.title}</h2>
+          <p>
+            {bundle.session.className}
+            {bundle.session.subject ? ` · ${bundle.session.subject}` : ''} ·{' '}
+            {bundle.session.questionCount} questões
+          </p>
+        </div>
+        <Button variant="outline" onClick={() => window.print()}>
+          <FileDown /> Imprimir folha
+        </Button>
+      </div>
+      <nav className="tabs">
+        <button
+          className={tab === 'correct' ? 'active' : ''}
+          onClick={() => setTab('correct')}
+        >
+          <ScanLine /> Corrigir
+        </button>
+        <button
+          className={tab === 'analytics' ? 'active' : ''}
+          onClick={() => setTab('analytics')}
+        >
+          <BarChart3 /> Estatísticas
+        </button>
+        <button
+          className={tab === 'settings' ? 'active' : ''}
+          onClick={() => setTab('settings')}
+        >
+          <ClipboardCheck /> Sessão
+        </button>
+      </nav>
+      {tab === 'correct' && (
+        <CorrectionPanel
+          bundle={bundle}
+          userId={userId}
+          onReload={reload}
+        />
+      )}
+      {tab === 'analytics' && <AnalyticsPanel bundle={bundle} />}
+      {tab === 'settings' && (
+        <div className="settings-layout">
+          <article className="panel session-summary">
+            <h3>Configuração da prova</h3>
+            <dl>
+              <div><dt>Questões</dt><dd>{bundle.session.questionCount}</dd></div>
+              <div><dt>Valor por questão</dt><dd>{formatScore(bundle.session.pointsPerQuestion)}</dd></div>
+              <div><dt>Nota máxima</dt><dd>{formatScore(bundle.session.questionCount * bundle.session.pointsPerQuestion)}</dd></div>
+              <div><dt>Correções</dt><dd>{bundle.corrections.length}</dd></div>
+            </dl>
+            {bundle.session.lockedAt && (
+              <p className="locked-note">
+                <LockKeyhole /> Estrutura travada desde a primeira correção.
               </p>
             )}
-          </aside>
-        </section>
+            <div className="settings-actions">
+              {!bundle.session.lockedAt && (
+                <Button variant="outline" onClick={() => onEdit(bundle)}>
+                  <FileText /> Editar configuração
+                </Button>
+              )}
+              <Button variant="outline" disabled={busy} onClick={duplicate}>
+                <Copy /> Duplicar sessão
+              </Button>
+              <Button variant="outline" onClick={archive}>
+                <Archive />
+                {bundle.session.status === 'archived' ? 'Reativar' : 'Arquivar'}
+              </Button>
+              <Button variant="destructive" onClick={remove}>
+                <Trash2 /> Excluir sessão
+              </Button>
+            </div>
+          </article>
+          <article className="panel history-panel">
+            <h3>Correções salvas</h3>
+            {bundle.corrections.length ? (
+              bundle.corrections.map((correction) => (
+                <div className="history-row" key={correction.id}>
+                  <div>
+                    <strong>
+                      {correction.studentLabel || 'Aluno não identificado'}
+                    </strong>
+                    <span>
+                      {new Date(correction.createdAt).toLocaleString('pt-BR')}
+                    </span>
+                  </div>
+                  <b>
+                    {formatScore(correction.score)} /{' '}
+                    {formatScore(correction.maximumScore)}
+                  </b>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="Excluir correção"
+                    onClick={() => removeCorrection(correction.id)}
+                  >
+                    <Trash2 />
+                  </Button>
+                </div>
+              ))
+            ) : (
+              <p>Nenhuma correção salva.</p>
+            )}
+          </article>
+        </div>
       )}
+      <PrintableSheet session={bundle.session} />
+    </section>
+  );
+}
 
+export default function Home() {
+  const [user, setUser] = useState<AppUser | null>(
+    firebaseConfigured ? null : LOCAL_USER,
+  );
+  const [authLoading, setAuthLoading] = useState(firebaseConfigured);
+  const [authError, setAuthError] = useState('');
+  const [view, setView] = useState<View>('sessions');
+  const [sessions, setSessions] = useState<ExamSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [bundle, setBundle] = useState<SessionBundle | null>(null);
+  const [editingBundle, setEditingBundle] = useState<SessionBundle | null>(null);
+
+  useEffect(() => {
+    if (!firebaseConfigured || !auth) return;
+    getRedirectResult(auth).catch(() => undefined);
+    return onAuthStateChanged(auth, async (nextUser) => {
+      setUser(nextUser);
+      setAuthLoading(false);
+      if (nextUser)
+        await ensureUser(nextUser.uid, {
+          displayName: nextUser.displayName,
+          email: nextUser.email,
+        });
+    });
+  }, []);
+
+  const refreshSessions = useCallback(async () => {
+    if (!user) return;
+    setSessionsLoading(true);
+    try {
+      setSessions(await listSessions(user.uid));
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void refreshSessions(), 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshSessions]);
+
+  const login = async () => {
+    if (!auth) return;
+    setAuthError('');
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (cause) {
+      const code = (cause as { code?: string }).code;
+      if (
+        code === 'auth/popup-blocked' ||
+        code === 'auth/cancelled-popup-request'
+      )
+        await signInWithRedirect(auth, provider);
+      else
+        setAuthError('Não foi possível entrar com Google. Tente novamente.');
+    }
+  };
+
+  const openSession = async (id: string) => {
+    if (!user) return;
+    setSessionsLoading(true);
+    try {
+      const loaded = await loadSession(user.uid, id);
+      if (loaded) {
+        setBundle(loaded);
+        setView('session');
+      }
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  if (authLoading)
+    return (
+      <main className="login-shell">
+        <div className="empty-state">
+          <ScanLine className="spin" />
+          <p>Preparando o Corrige Fácil…</p>
+        </div>
+      </main>
+    );
+  if (!user) return <LoginScreen onLogin={login} error={authError} />;
+
+  return (
+    <main className="app-shell">
+      <header className="topbar app-topbar">
+        <button
+          className="brand-button"
+          onClick={() => {
+            setView('sessions');
+            setBundle(null);
+            setEditingBundle(null);
+          }}
+        >
+          <span className="brand-mark"><GraduationCap /></span>
+          <span><small>CORREÇÃO INTELIGENTE</small><strong>Corrige Fácil</strong></span>
+        </button>
+        <nav>
+          <button onClick={() => { setView('sessions'); setBundle(null); }}><LayoutDashboard /> Minhas sessões</button>
+          <button onClick={() => { setEditingBundle(null); setView('create'); }}><Plus /> Nova sessão</button>
+        </nav>
+        <div className="user-menu">
+          <span><UserRound /> {user.displayName || user.email || 'Professor'}</span>
+          {firebaseConfigured ? (
+            <Button size="sm" variant="ghost" onClick={() => auth && signOut(auth)}><LogOut /> Sair</Button>
+          ) : (
+            <span className="local-pill">Modo local</span>
+          )}
+        </div>
+      </header>
+      {!firebaseConfigured && (
+        <div className="setup-banner">
+          <LockKeyhole /> Firebase ainda não configurado: seus dados estão sendo
+          mantidos somente neste aparelho para validação.
+        </div>
+      )}
+      {view === 'sessions' && (
+        <SessionsView
+          sessions={sessions}
+          loading={sessionsLoading}
+          onCreate={() => {
+            setEditingBundle(null);
+            setView('create');
+          }}
+          onOpen={openSession}
+        />
+      )}
+      {view === 'create' && (
+        <CreateSessionView
+          initialBundle={editingBundle}
+          userId={user.uid}
+          onCancel={() => {
+            setView(editingBundle ? 'session' : 'sessions');
+            setEditingBundle(null);
+          }}
+          onSaved={(saved) => {
+            setBundle(saved);
+            setEditingBundle(null);
+            setView('session');
+            void refreshSessions();
+          }}
+        />
+      )}
+      {view === 'session' && bundle && (
+        <SessionWorkspace
+          initialBundle={bundle}
+          userId={user.uid}
+          onBack={() => {
+            setView('sessions');
+            setBundle(null);
+            void refreshSessions();
+          }}
+          onChanged={refreshSessions}
+          onEdit={(draft) => {
+            setEditingBundle(draft);
+            setView('create');
+          }}
+        />
+      )}
       <footer>
-        <LockKeyhole /> As fotos são processadas somente neste aparelho. Nenhuma
-        conta ou assinatura é necessária.
+        <LockKeyhole /> Fotos e PDFs são processados localmente. Somente textos
+        revisados e resultados são salvos.
       </footer>
-      <PrintableSheet
-        questionCount={questionCount}
-        pointsPerQuestion={pointsPerQuestion}
-      />
     </main>
   );
 }

@@ -1,5 +1,6 @@
 # dependencies
 /node_modules
+/.pnpm-store/
 /.pnp
 .pnp.*
 .yarn/*
@@ -10,6 +11,7 @@
 
 # testing
 /coverage
+*.tsbuildinfo
 
 # next.js
 /.next/
@@ -28,6 +30,7 @@ yarn-error.log*
 
 # local environment
 .env*
+!.env.example
 
 # deployment and generated files
 .vercel
