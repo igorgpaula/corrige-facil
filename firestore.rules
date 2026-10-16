@@ -1,8 +1,29 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedInWithEmail() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true;
+    }
+
+    function normalizedEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function hasPlatformAccess() {
+      return signedInWithEmail()
+        && exists(/databases/$(database)/documents/authorizedUsers/$(normalizedEmail()))
+        && get(/databases/$(database)/documents/authorizedUsers/$(normalizedEmail())).data.enabled == true;
+    }
+
     function owns(uid) {
-      return request.auth != null && request.auth.uid == uid;
+      return hasPlatformAccess() && request.auth.uid == uid;
+    }
+
+    match /authorizedUsers/{email} {
+      allow get: if signedInWithEmail() && normalizedEmail() == email;
+      allow list, create, update, delete: if false;
     }
 
     match /users/{uid} {

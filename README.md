@@ -28,8 +28,9 @@ pnpm dev
 1. Crie um projeto no [Firebase Console](https://console.firebase.google.com/).
 2. Ative o provedor Google em **Authentication > Sign-in method**.
 3. Crie o banco Firestore e publique as regras de `firestore.rules`.
-4. Registre um aplicativo Web e adicione `igorgpaula.github.io` aos domínios autorizados do Authentication.
-5. Cadastre no repositório, em **Settings > Secrets and variables > Actions > Variables**, as variáveis:
+4. Crie a coleção `authorizedUsers`. O ID de cada documento deve ser o e-mail autorizado em letras minúsculas e o documento deve conter o campo booleano `enabled: true`.
+5. Registre um aplicativo Web e adicione `igorgpaula.github.io` aos domínios autorizados do Authentication.
+6. Cadastre no repositório, em **Settings > Secrets and variables > Actions > Variables**, as variáveis:
    - `FIREBASE_API_KEY`
    - `FIREBASE_AUTH_DOMAIN`
    - `FIREBASE_PROJECT_ID`

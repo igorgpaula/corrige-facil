@@ -13,6 +13,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 
+import { ACCESS_COLLECTION, normalizeAccessEmail } from './access';
 import { db, firebaseConfigured } from './firebase';
 import type {
   Correction,
@@ -84,6 +85,16 @@ export async function ensureUser(
     { ...profile, updatedAt: serverTimestamp() },
     { merge: true },
   );
+}
+
+export async function hasPlatformAccess(email: string | null) {
+  if (!firebaseConfigured || !db) return true;
+  const normalizedEmail = normalizeAccessEmail(email);
+  if (!normalizedEmail) return false;
+  const access = await getDoc(
+    doc(db, ACCESS_COLLECTION, normalizedEmail),
+  );
+  return access.exists() && access.data().enabled === true;
 }
 
 export async function listSessions(uid: string): Promise<ExamSession[]> {

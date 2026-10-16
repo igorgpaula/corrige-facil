@@ -58,6 +58,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { unauthorizedAccountMessage } from '@/lib/access';
 import { calculateAnalytics } from '@/lib/analytics';
 import { auth, firebaseConfigured } from '@/lib/firebase';
 import {
@@ -72,6 +73,7 @@ import {
   deleteSession,
   duplicateSession,
   ensureUser,
+  hasPlatformAccess,
   listSessions,
   loadSession,
   saveCorrection,
@@ -292,7 +294,7 @@ function LoginScreen({ onLogin, error }: { onLogin: () => void; error: string })
         </Button>
         {error && <p className="error-message">{error}</p>}
         <small>
-          <LockKeyhole /> As fotos permanecem no seu aparelho.
+          <LockKeyhole /> Acesso restrito. As fotos permanecem no seu aparelho.
         </small>
       </section>
     </main>
@@ -1394,15 +1396,38 @@ export default function Home() {
 
   useEffect(() => {
     if (!firebaseConfigured || !auth) return;
-    getRedirectResult(auth).catch(() => undefined);
-    return onAuthStateChanged(auth, async (nextUser) => {
-      setUser(nextUser);
-      setAuthLoading(false);
-      if (nextUser)
+    const activeAuth = auth;
+    getRedirectResult(activeAuth).catch(() => undefined);
+    return onAuthStateChanged(activeAuth, async (nextUser) => {
+      if (!nextUser) {
+        setUser(null);
+        setAuthLoading(false);
+        return;
+      }
+      setAuthLoading(true);
+      try {
+        const allowed = await hasPlatformAccess(nextUser.email);
+        if (!allowed) {
+          setUser(null);
+          setAuthError(unauthorizedAccountMessage(nextUser.email));
+          await signOut(activeAuth);
+          return;
+        }
         await ensureUser(nextUser.uid, {
           displayName: nextUser.displayName,
           email: nextUser.email,
         });
+        setAuthError('');
+        setUser(nextUser);
+      } catch {
+        setUser(null);
+        setAuthError(
+          'Não foi possível validar sua permissão de acesso. Tente novamente.',
+        );
+        await signOut(activeAuth).catch(() => undefined);
+      } finally {
+        setAuthLoading(false);
+      }
     });
   }, []);
 
@@ -1425,6 +1450,7 @@ export default function Home() {
     if (!auth) return;
     setAuthError('');
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
     try {
       await signInWithPopup(auth, provider);
     } catch (cause) {
