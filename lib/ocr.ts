@@ -4,6 +4,14 @@ const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_PAGES = 20;
 const MAX_QUESTIONS = 50;
 
+export function resolvePdfWorkerUrl(assetUrl: string, pageOrigin: string) {
+  const resolved = new URL(assetUrl, pageOrigin);
+  if (resolved.protocol === 'file:') {
+    return new URL(resolved.pathname, pageOrigin).toString();
+  }
+  return resolved.toString();
+}
+
 type Progress = {
   page: number;
   totalPages: number;
@@ -119,10 +127,14 @@ async function extractPdf(
   onProgress: (progress: Progress) => void,
 ) {
   const pdfjs = await import('pdfjs-dist');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  const workerAssetUrl = new URL(
     'pdfjs-dist/build/pdf.worker.min.mjs',
     import.meta.url,
   ).toString();
+  pdfjs.GlobalWorkerOptions.workerSrc = resolvePdfWorkerUrl(
+    workerAssetUrl,
+    window.location.origin,
+  );
   const pdfDocument = await pdfjs.getDocument({ data: await file.arrayBuffer() })
     .promise;
   if (pdfDocument.numPages > MAX_PAGES)

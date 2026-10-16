@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseExamText } from './ocr';
+import { parseExamText, resolvePdfWorkerUrl } from './ocr';
+
+describe('resolvePdfWorkerUrl', () => {
+  it('converts the generated file URL into an HTTPS asset URL', () => {
+    expect(
+      resolvePdfWorkerUrl(
+        'file:///corrige-facil/v2/_next/static/media/pdf.worker.min.mjs',
+        'https://igorgpaula.github.io',
+      ),
+    ).toBe(
+      'https://igorgpaula.github.io/corrige-facil/v2/_next/static/media/pdf.worker.min.mjs',
+    );
+  });
+
+  it('preserves an already valid HTTPS worker URL', () => {
+    expect(
+      resolvePdfWorkerUrl(
+        'https://cdn.example.com/pdf.worker.min.mjs',
+        'https://igorgpaula.github.io',
+      ),
+    ).toBe('https://cdn.example.com/pdf.worker.min.mjs');
+  });
+});
 
 describe('parseExamText', () => {
   it('extracts numbered questions and alternatives', () => {
