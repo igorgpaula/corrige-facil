@@ -21,12 +21,6 @@ jobs:
       - name: Baixar o projeto
         uses: actions/checkout@v6
 
-      - name: Baixar a versão clássica
-        uses: actions/checkout@v6
-        with:
-          ref: v1.0.0
-          path: v1-source
-
       - name: Preparar o pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -57,6 +51,12 @@ jobs:
           NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_MESSAGING_SENDER_ID }}
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.FIREBASE_APP_ID }}
         run: pnpm build
+
+      - name: Baixar a versão clássica
+        uses: actions/checkout@v6
+        with:
+          ref: v1.0.0
+          path: v1-source
 
       - name: Instalar dependências da v1.0
         working-directory: v1-source
