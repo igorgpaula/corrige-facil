@@ -849,6 +849,18 @@ footer svg {
 .login-card small svg {
   width: 14px;
 }
+.version-badge {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 7px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #08746d;
+  background: #d9f3ef;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.03em;
+}
 .app-topbar {
   position: sticky;
   z-index: 20;

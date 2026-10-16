@@ -4,8 +4,17 @@ Aplicativo gratuito para criar sessões de prova, fotografar folhas de respostas
 
 ## Usar o aplicativo
 
-- [Versão no GitHub Pages](https://igorgpaula.github.io/corrige-facil/)
+- [Escolher uma versão](https://igorgpaula.github.io/corrige-facil/)
+- [Corrige Fácil v1.0 — versão simples](https://igorgpaula.github.io/corrige-facil/v1/)
+- [Corrige Fácil v2.0 — sessões e estatísticas](https://igorgpaula.github.io/corrige-facil/v2/)
 - [Versão no OpenAI Sites](https://corrige-facil-provas.gdmseeds-whe-7678.chatgpt.site/)
+
+## Versões
+
+- **v1.0:** correção rápida, sem cadastro, com dados somente no aparelho.
+- **v2.0:** login Google, sessões, leitura da prova em branco, histórico e estatísticas.
+
+O código histórico da v1.0 está fixado na tag Git `v1.0.0`. A linha principal do projeto contém a v2.0.
 
 ## Desenvolvimento
 

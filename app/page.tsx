@@ -282,7 +282,7 @@ function LoginScreen({ onLogin, error }: { onLogin: () => void; error: string })
           <GraduationCap />
         </div>
         <p className="section-kicker">CORREÇÃO E INSIGHTS DA TURMA</p>
-        <h1>Corrige Fácil</h1>
+        <h1>Corrige Fácil <span className="version-badge">v2.0</span></h1>
         <p>
           Crie sessões, corrija pelo celular e descubra quais questões foram os
           principais gargalos da turma.
@@ -1476,7 +1476,7 @@ export default function Home() {
           }}
         >
           <span className="brand-mark"><GraduationCap /></span>
-          <span><small>CORREÇÃO INTELIGENTE</small><strong>Corrige Fácil</strong></span>
+          <span><small>CORREÇÃO INTELIGENTE · V2.0</small><strong>Corrige Fácil</strong></span>
         </button>
         <nav>
           <button onClick={() => { setView('sessions'); setBundle(null); }}><LayoutDashboard /> Minhas sessões</button>
