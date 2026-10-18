@@ -4,6 +4,7 @@ import { testOpenCv } from './opencv-test-runtime';
 import type { OpenCv } from './opencv';
 import {
   getQuestionCoordinates,
+  getStandardSheetLayout,
   needsReview,
   assertFinalReadings,
 } from './sheet-geometry';
@@ -89,12 +90,17 @@ describe('geometria e confiança', () => {
     expect(needsReview(result.readings[7])).toBe(true);
     expect(result.readings[7].status).toBe('multiple');
   });
-  it.each([1, 10, 30, 50])(
-    'lê quadro V2 de %s questões sem letras dentro dos círculos',
-    (count) => {
+  it.each(
+    [1, 2, 8, 10, 15, 25, 26, 30, 50].flatMap((count) => [
+      { count, sheetVersion: 2 as const },
+      { count, sheetVersion: 3 as const },
+    ]),
+  )(
+    'lê quadro de $count questões na versão $sheetVersion, incluindo folhas antigas',
+    ({ count, sheetVersion }) => {
       const key = Array.from({ length: count }, (_, i) => LETTERS[i % 5]);
       const result = read(
-        makeAnswerSheet(key, { markers: true, shadow: true }),
+        makeAnswerSheet(key, { markers: true, shadow: true, sheetVersion }),
         { mode: 'standard' },
         count,
       );
@@ -104,11 +110,27 @@ describe('geometria e confiança', () => {
     },
   );
   it('não assume orientação de folhas antigas sem indicação V2', () => {
-    const image = makeAnswerSheet(expected, { markers: true });
+    const image = makeAnswerSheet(expected, { markers: true, sheetVersion: 2 });
     for (let y = 0; y < image.height * 0.08; y++)
       for (let x = 70; x < 100; x++) {
         const o = (Math.floor(y) * image.width + x) * 4;
         image.pixels[o] = image.pixels[o + 1] = image.pixels[o + 2] = 248;
+      }
+    const result = read(image, { mode: 'standard' });
+    expect(result.alignment).not.toBe('verified');
+    expect(result.readings.every(needsReview)).toBe(true);
+  });
+  it('não aceita com segurança uma folha nova cuja marca de versão foi apagada', () => {
+    const image = makeAnswerSheet(expected, { markers: true });
+    const layout = getStandardSheetLayout(10);
+    const y = (image.height * layout.markerInsetY) / layout.heightMm;
+    for (let py = Math.floor(y - 12); py <= y + 12; py++)
+      for (let px = 125; px <= 150; px++) {
+        const offset = (py * image.width + px) * 4;
+        image.pixels[offset] =
+          image.pixels[offset + 1] =
+          image.pixels[offset + 2] =
+            248;
       }
     const result = read(image, { mode: 'standard' });
     expect(result.alignment).not.toBe('verified');
@@ -150,6 +172,30 @@ describe('geometria e confiança', () => {
   });
 });
 describe('validação reservada: não ajustar limiares a estes casos', () => {
+  it.each([10, 26, 50])(
+    'não aceita erro seguro no novo quadro de %s questões com tinta azul, sombra e inclinação',
+    (count) => {
+      const key = Array.from(
+        { length: count },
+        (_, i) => LETTERS[(i * 3 + 1) % 5],
+      );
+      const image = makeAnswerSheet(key, {
+        markers: true,
+        shadow: true,
+        blue: true,
+        tilt: 0.008,
+      });
+      const result = read(image, { mode: 'standard' }, count);
+      noSafeErrors(result, key);
+      expect(result.alignment).not.toBe('failed');
+      if (result.alignment !== 'verified')
+        expect(result.readings.every(needsReview)).toBe(true);
+      else
+        expect(
+          result.readings.filter((r) => !needsReview(r)).length,
+        ).toBeGreaterThanOrEqual(count * 0.8);
+    },
+  );
   it.each([
     { pencil: true },
     { blue: true },

@@ -893,7 +893,11 @@ function SessionWorkspace({
             {bundle.session.questionCount} questões
           </p>
         </div>
-        <Button variant="outline" onClick={() => window.print()}>
+        <Button
+          variant="outline"
+          title="Gera o gabarito padronizado em uma coluna. Salve como PDF para usar no Canva."
+          onClick={() => window.print()}
+        >
           <FileDown /> Imprimir folha
         </Button>
       </div>

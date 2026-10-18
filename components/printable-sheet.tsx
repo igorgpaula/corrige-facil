@@ -1,4 +1,8 @@
-import { getQuestionCoordinates } from '@/lib/sheet-geometry';
+import type { CSSProperties } from 'react';
+import {
+  getQuestionCoordinates,
+  getStandardSheetLayout,
+} from '@/lib/sheet-geometry';
 import { LETTERS, type ExamSession } from '@/lib/types';
 
 function formatScore(value: number) {
@@ -6,24 +10,31 @@ function formatScore(value: number) {
 }
 
 export function PrintableSheet({ session }: { session: ExamSession }) {
-  const columns = session.questionCount > 25 ? 2 : 1;
-  const rows = Math.ceil(session.questionCount / columns);
-  const cardHeight = Math.min(250, Math.max(90, 58 + rows * 7.4));
+  const layout = getStandardSheetLayout(session.questionCount);
   const position = (value: number, axis: 'x' | 'y') =>
-    `${((axis === 'x' ? 0.05 : 0.04) + value * (axis === 'x' ? 0.9 : 0.92)) * 100}%`;
+    axis === 'x'
+      ? `${(0.05 + value * 0.9) * 100}%`
+      : `${layout.markerInsetY + value * (layout.heightMm - layout.markerInsetY * 2)}mm`;
   return (
     <section className="print-sheet" aria-hidden="true">
       <div
-        className={columns === 1 ? 'print-card' : 'print-card wide'}
-        style={{ height: `${cardHeight}mm` }}
+        className="print-card"
+        data-layout="single-column"
+        style={
+          {
+            height: `${layout.heightMm}mm`,
+            '--bubble-diameter': `${layout.bubbleDiameterMm}mm`,
+          } as CSSProperties
+        }
       >
         <div className="print-marker marker-tl" />
         <div className="print-marker marker-tr" />
         <div className="print-marker marker-bl" />
         <div className="print-marker marker-br" />
         <div className="print-orientation-dot" />
+        <div className="print-layout-dot" />
         <div className="print-heading">
-          <span>↑ FOLHA DE RESPOSTAS · MODELO V2</span>
+          <span>↑ GABARITO PADRONIZADO · 1 COLUNA</span>
           <h1>{session.title}</h1>
           <div className="student-fields">
             <p>Aluno(a): __________________________________</p>

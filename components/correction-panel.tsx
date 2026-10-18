@@ -292,10 +292,11 @@ export function CorrectionPanel({
             onChange={(event) => void chooseTemplate(event.target.value)}
           >
             <option value="builtin:legacy">
-              Quadro atual / provas já impressas
+              Opção 1: Gabarito de forma livre
             </option>
+            {/* Keep the persisted marker-reader family ID; the printed marks identify its layout. */}
             <option value="builtin:standard-v2">
-              Quadro padronizado · versão 2
+              Opção 2: Gabarito padronizado pelo app
             </option>
             {templates.map((item) => (
               <option
@@ -311,6 +312,11 @@ export function CorrectionPanel({
             O modelo não altera as questões nem o gabarito da sessão. Para
             trocar, descarte a foto atual.
           </small>
+          <p className="sheet-model-help">
+            {mode === 'standard'
+              ? 'Uma coluna, de 1 a 50 questões. Em “Imprimir folha”, salve como PDF e leve o quadro completo ao Canva. Posicione onde quiser, redimensione proporcionalmente e preserve os quatro quadrados e os dois pontos de identificação.'
+              : 'Use seu quadro já impresso, com A–E em cada questão, sem exigir o padrão do app. Você pode cadastrar uma foto do quadro em branco; se necessário, ajuste os quatro pontos na análise.'}
+          </p>
         </div>
         <input
           ref={cameraInput}
@@ -342,7 +348,7 @@ export function CorrectionPanel({
             <h3>Fotografe somente as respostas</h3>
             <p>
               {mode === 'standard'
-                ? 'Inclua os quatro marcadores e mantenha a indicação de orientação para cima.'
+                ? 'Enquadre de perto o quadro completo: quatro quadrados e indicação de orientação para cima. Folhas padronizadas anteriores continuam compatíveis.'
                 : 'Inclua A–E de todas as questões. Se houver dúvida, o app pedirá quatro pontos.'}
             </p>
             <div className="source-actions">

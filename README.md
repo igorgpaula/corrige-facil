@@ -52,10 +52,12 @@ O GitHub Actions executa testes, verifica os tipos e publica automaticamente no 
 
 ## Leitor calibrado de gabaritos
 
-- Em **Corrigir**, escolha **Quadro atual** para folhas já impressas ou **Quadro padronizado · versão 2** para a nova folha gerada pelo app.
+- Em **Corrigir**, escolha **Opção 1: Gabarito de forma livre** para seu próprio quadro ou **Opção 2: Gabarito padronizado pelo app** para a folha gerada pelo aplicativo.
 - **Cadastrar modelo de respostas** recebe uma foto do quadro **em branco**. Não é a importação dos enunciados da prova. Confira a sobreposição antes de cadastrar.
-- O quadro V2 tem quatro marcadores, uma indicação de orientação e letras fora dos círculos. Folhas antigas com marcadores continuam utilizáveis mediante alinhamento assistido.
-- **Imprimir folha** gera um único quadro em A4 retrato. Use escala de 100% e, se desejar, desative cabeçalhos e rodapés do navegador. Preserve os quatro marcadores ao inserir o quadro no canto da prova e ao fotografar. Na correção, selecione **Quadro padronizado · versão 2**.
+- O novo quadro tem **uma coluna de 1 a 50 questões**, quatro marcadores quadrados, dois pontos de identificação e letras fora dos círculos. A quantidade é a da sessão. Acima de 25 questões, os círculos têm 4 mm (em vez de 5 mm) para manter todas as linhas em uma página A4, sem sobreposição.
+- **Imprimir folha** gera somente o quadro padronizado em A4 retrato. Escolha **Salvar como PDF** para importar no Canva. Posicione o quadro completo em qualquer lugar da primeira folha e redimensione proporcionalmente, sem distorcer, recortar marcadores ou mover alternativas separadamente. Evite reduzir demais. Ao fotografar, enquadre de perto **somente o quadro inteiro**, não a prova inteira. Na correção, selecione **Gabarito padronizado pelo app**.
+- As folhas anteriores do padrão V2, inclusive as de duas colunas, continuam reconhecidas. A segunda marca circular identifica o novo desenho; a geometria dos círculos também é conferida para que uma marca ausente não provoque leitura segura com o desenho errado. Folhas antigas sem indicação de orientação exigem alinhamento assistido.
+- O identificador persistido `builtin:standard-v2` e a versão 2 dos modelos representam a família de leitura por marcadores e permanecem compatíveis com as regras atuais. A edição do desenho é identificada **na imagem**, não inferida desse identificador: um ponto usa a geometria anterior; dois pontos usam a coluna única. Nenhum dado ou regra do Firebase precisa ser migrado nesta alteração.
 - Quando a geometria não for segura, informe A e E da primeira e da última questão. Há ampliação e ajuste pelas setas do teclado. No quadro padronizado, indique os centros dos quatro marcadores.
 - Letras sugeridas não são respostas aceitas. Revise as pendências, confirme branco ou anule uma marcação múltipla. A nota é provisória até resolver todas as pendências.
 - Confiança é uma estimativa heurística, não uma probabilidade calibrada. A revisão visual continua importante, inclusive nas leituras de confiança alta.
@@ -72,13 +74,13 @@ As cinco fotografias de referência **não fazem parte do repositório nem da pu
 
 Resultado do conjunto de referência em 18/10/2026:
 
-| Foto | Aceitas automaticamente | Encaminhadas para revisão |
-| --- | ---: | ---: |
-| 18/10, 14:25 | 0 | 10 — ajuste de quatro pontos; depois, 10 leituras corretas |
-| 18/10, 15:04 | 9 | 1 — sugestão A na questão 10 |
-| 07/09, 14:55 | 6 | 4 |
-| 07/09, 15:02 | 7 | 3 |
-| Designer | 10 | 0 |
+| Foto         | Aceitas automaticamente |                                  Encaminhadas para revisão |
+| ------------ | ----------------------: | ---------------------------------------------------------: |
+| 18/10, 14:25 |                       0 | 10 — ajuste de quatro pontos; depois, 10 leituras corretas |
+| 18/10, 15:04 |                       9 |                               1 — sugestão A na questão 10 |
+| 07/09, 14:55 |                       6 |                                                          4 |
+| 07/09, 15:02 |                       7 |                                                          3 |
+| Designer     |                      10 |                                                          0 |
 
 Não houve erros aceitos como seguros nesse conjunto. Isso não significa garantia de acerto em fotos futuras. Cenários sintéticos reservados verificam perspectiva, inclinação, resolução, iluminação, tinta azul/preta, lápis, branco e rasura dupla; eles não devem ser usados para ajustar os limiares.
 

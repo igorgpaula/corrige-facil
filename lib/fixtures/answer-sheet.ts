@@ -1,4 +1,8 @@
-import { getQuestionCoordinates } from '../sheet-geometry';
+import {
+  getQuestionCoordinates,
+  getStandardSheetLayout,
+  type StandardSheetVersion,
+} from '../sheet-geometry';
 import { LETTERS, type Letter } from '../types';
 const glyphs = [
   ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
@@ -16,17 +20,17 @@ export function makeAnswerSheet(
     tilt = 0,
     pencil = false,
     blue = false,
+    sheetVersion = 3 as StandardSheetVersion,
   } = {},
 ) {
   const width = 600;
-  const cardWidth = answers.length > 25 ? 186 : 100;
-  const cardHeight = Math.min(
-    250,
-    Math.max(
-      90,
-      58 + Math.ceil(answers.length / (answers.length > 25 ? 2 : 1)) * 7.4,
-    ),
-  );
+  const layout = getStandardSheetLayout(answers.length, sheetVersion);
+  const cardWidth = layout.widthMm;
+  const cardHeight = layout.heightMm;
+  const topMarker = heightFraction(layout.markerInsetY);
+  function heightFraction(mm: number) {
+    return mm / cardHeight;
+  }
   const height = markers ? Math.round((width * cardHeight) / cardWidth) : 800;
   const pixels = new Uint8ClampedArray(width * height * 4);
   for (let y = 0; y < height; y += 1) {
@@ -55,11 +59,14 @@ export function makeAnswerSheet(
   };
   if (markers) {
     for (const x of [30, 570])
-      for (const y of [height * 0.04, height * 0.96])
+      for (const y of [height * topMarker, height * (1 - topMarker)])
         rectangle(x, y, (width * 6) / cardWidth, (width * 6) / cardWidth);
     for (let dy = -7; dy <= 7; dy++)
       for (let dx = -7; dx <= 7; dx++)
-        if (dx * dx + dy * dy < 49) ink(84 + dx, height * 0.04 + dy);
+        if (dx * dx + dy * dy < 49) {
+          ink(84 + dx, height * topMarker + dy);
+          if (sheetVersion === 3) ink(138 + dx, height * topMarker + dy);
+        }
   } else {
     // Dense heading and the dash before A must never become a row or column.
     rectangle(180, 62, 295, 14);
@@ -67,14 +74,18 @@ export function makeAnswerSheet(
   for (let row = 0; row < answers.length; row += 1) {
     const answer = answers[row];
     const selected = Array.isArray(answer) ? answer : [answer];
-    const standard = getQuestionCoordinates(row, answers.length);
-    const y = markers ? height * (0.04 + standard.y * 0.92) : 115 + row * 70;
+    const standard = getQuestionCoordinates(row, answers.length, sheetVersion);
+    const y = markers
+      ? height * (topMarker + standard.y * (1 - topMarker * 2))
+      : 115 + row * 70;
     if (!markers) rectangle(72, y, 9, 3);
     for (let column = 0; column < 5; column += 1) {
       const x = markers
         ? 30 + standard.bubbleXs[column] * 540
         : 120 + column * 48;
-      const radius = markers ? (width * 2.5) / cardWidth : 16;
+      const radius = markers
+        ? (width * layout.bubbleDiameterMm) / 2 / cardWidth
+        : 16;
       const filled = selected.includes(LETTERS[column]);
       for (let dy = -Math.ceil(radius); dy <= radius; dy += 1) {
         for (let dx = -Math.ceil(radius); dx <= radius; dx += 1) {

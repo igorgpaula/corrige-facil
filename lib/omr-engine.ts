@@ -1,5 +1,8 @@
 import type { CvMat, OpenCv } from './opencv';
-import { getQuestionCoordinates } from './sheet-geometry';
+import {
+  getQuestionCoordinates,
+  getStandardSheetLayout,
+} from './sheet-geometry';
 import {
   LETTERS,
   type AnswerReading,
@@ -387,11 +390,46 @@ function findMarkerGeometry(
     anchors: markers as unknown as SheetAnchors,
     radius:
       distance(markers[0], markers[1]) *
-      (2.5 / ((count > 25 ? 186 : 100) * 0.9)),
+      (getStandardSheetLayout(count).bubbleDiameterMm / 2 / 90),
     confidence: 0.96,
     matched: 4,
     residual: 0,
   };
+}
+
+function standardLayoutSignature(
+  cv: OpenCv,
+  binary: CvMat,
+  anchors: SheetAnchors,
+) {
+  // Both layouts share the first dot. A second dot identifies the new layout,
+  // independently of the block's position, scale or perspective on the page.
+  const h = transform(cv, anchors, [
+    { x: 0, y: 0 },
+    { x: 900, y: 0 },
+    { x: 900, y: 900 },
+    { x: 0, y: 900 },
+  ]);
+  const strip = new cv.Mat();
+  try {
+    cv.warpPerspective(binary, strip, h, new cv.Size(900, 24));
+    let dark = 0;
+    let total = 0;
+    for (let y = 0; y <= 8; y++)
+      for (let dx = -8; dx <= 8; dx++) {
+        if (dx * dx + y * y > 64) continue;
+        dark += strip.data[y * 900 + 180 + dx] / 255;
+        total++;
+      }
+    const score = dark / Math.max(1, total);
+    return {
+      version: score >= 0.65 ? (3 as const) : (2 as const),
+      ambiguous: score > 0.2 && score < 0.65,
+    };
+  } finally {
+    h.delete();
+    strip.delete();
+  }
 }
 
 export function validateAnchors(points: SheetAnchors) {
@@ -503,7 +541,13 @@ export function analyzeSheet(
     );
     allocated.push(kernel);
     cv.morphologyEx(binary, closed, cv.MORPH_CLOSE, kernel);
-    const found = contours(cv, closed, width, height, count);
+    const found = contours(
+      cv,
+      options.mode === 'standard' ? binary : closed,
+      width,
+      height,
+      count,
+    );
     let geometry: Geometry | null;
     if (options.anchors) {
       validateAnchors(options.anchors);
@@ -525,7 +569,7 @@ export function analyzeSheet(
           span *
           (options.template?.geometry.radiusRatio ??
             (options.mode === 'standard'
-              ? 2.5 / ((count > 25 ? 186 : 100) * 0.9)
+              ? getStandardSheetLayout(count).bubbleDiameterMm / 2 / 90
               : 0.0875)),
         confidence: 0.96,
         matched: 0,
@@ -564,12 +608,24 @@ export function analyzeSheet(
       };
 
     const standard = options.mode === 'standard';
+    const signature = standard
+      ? standardLayoutSignature(cv, binary, geometry.anchors)
+      : null;
+    const layout = getStandardSheetLayout(count, signature?.version ?? 3);
+    if (standard) {
+      geometry.radius =
+        (distance(geometry.anchors[0], geometry.anchors[1]) *
+          layout.bubbleDiameterMm) /
+        2 /
+        (layout.widthMm * 0.9);
+      if (signature?.ambiguous)
+        geometry.confidence = Math.min(geometry.confidence, 0.59);
+    }
     const canonicalWidth = standard ? 900 : 512;
-    const rows = Math.ceil(count / (count > 25 ? 2 : 1));
-    const cardHeight = Math.min(250, Math.max(90, 58 + rows * 7.4));
     const canonicalHeight = standard
       ? Math.round(
-          (900 * (cardHeight * 0.92)) / ((count > 25 ? 186 : 100) * 0.9),
+          (900 * (layout.heightMm - layout.markerInsetY * 2)) /
+            (layout.widthMm * 0.9),
         )
       : Math.max(112, (count - 1) * 100 + 112);
     const target: SheetAnchors = standard
@@ -622,7 +678,7 @@ export function analyzeSheet(
       odd(radius * 6),
       16,
     );
-    // V2 has a small orientation dot next to the top-left marker. Older sheets
+    // Standard sheets have an orientation dot next to the top-left marker. Older sheets
     // without it remain usable, but must be explicitly aligned by the teacher.
     if (standard && !options.anchors) {
       const orientation = diskScores(
@@ -643,7 +699,7 @@ export function analyzeSheet(
     }
     const points = Array.from({ length: count }, (_, question) => {
       if (standard) {
-        const c = getQuestionCoordinates(question, count);
+        const c = getQuestionCoordinates(question, count, layout.version);
         return c.bubbleXs.map((x) => ({
           x: x * canonicalWidth,
           y: c.y * canonicalHeight,
@@ -654,6 +710,24 @@ export function analyzeSheet(
         y: 56 + question * 100,
       }));
     });
+    if (standard) {
+      // Markers alone cannot approve the wrong layout (e.g. a missing version
+      // dot). Require the predicted circles to agree with the printed grid.
+      let matched = 0;
+      for (const row of points)
+        for (const p of row) {
+          const photo = project(inverse.data64F, p.x, p.y);
+          if (
+            found.circles.some(
+              (circle) => distance(circle, photo) < geometry.radius * 0.85,
+            )
+          )
+            matched++;
+        }
+      geometry.matched = matched;
+      if (matched < count * 5 * 0.55)
+        geometry.confidence = Math.min(geometry.confidence, 0.59);
+    }
     const scores = points.map((row) =>
       row.map((p) =>
         diskScores(

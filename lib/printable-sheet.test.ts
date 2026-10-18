@@ -4,9 +4,14 @@ import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { expect, it } from 'vitest';
 import { PrintableSheet } from '../components/printable-sheet';
+import { CorrectionPanel } from '../components/correction-panel';
 import type { ExamSession } from './types';
 import { analyzeSheet } from './omr-engine';
 import { testOpenCv } from './opencv-test-runtime';
+import {
+  getQuestionCoordinates,
+  getStandardSheetLayout,
+} from './sheet-geometry';
 
 function session(count: number): ExamSession {
   return {
@@ -27,6 +32,18 @@ const css = readFileSync(
   new URL('../app/globals.css', import.meta.url),
   'utf8',
 );
+it('apresenta as duas opções de gabarito com os novos nomes', () => {
+  const html = renderToStaticMarkup(
+    createElement(CorrectionPanel, {
+      bundle: { session: session(10), questions: [], corrections: [] },
+      userId: 'print-test',
+      onReload: async () => {},
+    }),
+  );
+  expect(html).toContain('Opção 1: Gabarito de forma livre');
+  expect(html).toContain('Opção 2: Gabarito padronizado pelo app');
+  expect(html).not.toContain('Quadro padronizado · versão 2');
+});
 it.each([1, 2, 10, 25, 26, 50])(
   'gera um único quadro de %s questões, com quatro marcadores e círculos vazios',
   (count) => {
@@ -36,9 +53,35 @@ it.each([1, 2, 10, 25, 26, 50])(
     expect(html.match(/class="print-sheet"/g)).toHaveLength(1);
     expect(html.match(/class="print-marker /g)).toHaveLength(4);
     expect(html).toContain('print-orientation-dot');
+    expect(html).toContain('print-layout-dot');
+    expect(html).toContain('GABARITO PADRONIZADO · 1 COLUNA');
+    expect(html).toContain('data-layout="single-column"');
+    expect(html).not.toContain('print-card wide');
     expect(html.match(/class="print-question"/g)).toHaveLength(count);
     expect(html.match(/class="print-option"/g)).toHaveLength(count * 5);
     expect(html).not.toContain('selected');
+  },
+);
+it.each(Array.from({ length: 50 }, (_, i) => i + 1))(
+  'mantém %s questões em uma coluna, sem sobreposição e dentro da área A4',
+  (count) => {
+    const layout = getStandardSheetLayout(count);
+    expect(layout.columns).toBe(1);
+    expect(layout.heightMm + 0.9).toBeLessThan(273);
+    const coordinates = Array.from({ length: count }, (_, index) =>
+      getQuestionCoordinates(index, count),
+    );
+    for (let i = 0; i < count; i++) {
+      expect(coordinates[i].bubbleXs).toEqual(coordinates[0].bubbleXs);
+      expect(coordinates[i].y).toBeGreaterThan(0);
+      expect(coordinates[i].y).toBeLessThan(1);
+      if (i > 0) {
+        const pitch =
+          (coordinates[i].y - coordinates[i - 1].y) *
+          (layout.heightMm - 2 * layout.markerInsetY);
+        expect(pitch).toBeGreaterThan(layout.bubbleDiameterMm);
+      }
+    }
   },
 );
 it('mantém a folha fora do contêiner oculto na impressão, sem forçar uma segunda página', () => {

@@ -1993,6 +1993,7 @@ footer svg {
     background: #fff;
   }
   .print-card {
+    box-sizing: content-box;
     position: relative;
     margin: 0 0 0 auto;
     width: 100mm;
@@ -2000,9 +2001,6 @@ footer svg {
     overflow: hidden;
     border: 0.45mm solid #111;
     background: #fff;
-  }
-  .print-card.wide {
-    width: 186mm;
   }
   .print-marker {
     position: absolute;
@@ -2015,24 +2013,24 @@ footer svg {
   }
   .marker-tl {
     left: 5%;
-    top: 4%;
+    top: 5mm;
   }
   .marker-tr {
     left: 95%;
-    top: 4%;
+    top: 5mm;
   }
   .marker-bl {
     left: 5%;
-    top: 96%;
+    top: calc(100% - 5mm);
   }
   .marker-br {
     left: 95%;
-    top: 96%;
+    top: calc(100% - 5mm);
   }
   .print-heading {
     position: absolute;
     z-index: 2;
-    top: 5%;
+    top: 11mm;
     left: 15%;
     right: 15%;
     text-align: center;
@@ -2089,8 +2087,8 @@ footer svg {
   .print-option {
     display: grid;
     place-items: center;
-    width: 5mm;
-    height: 5mm;
+    width: var(--bubble-diameter, 5mm);
+    height: var(--bubble-diameter, 5mm);
     border: 0.4mm solid #222;
     border-radius: 50%;
   }
@@ -2102,10 +2100,11 @@ footer svg {
     font-style: normal;
     font-size: 6.5pt;
   }
-  .print-orientation-dot {
+  .print-orientation-dot,
+  .print-layout-dot {
     position: absolute;
     left: 14%;
-    top: 4%;
+    top: 5mm;
     width: 2.6mm;
     height: 2.6mm;
     border: 1.3mm solid #000;
@@ -2113,12 +2112,15 @@ footer svg {
     background: #000;
     transform: translate(-50%, -50%);
   }
+  .print-layout-dot {
+    left: 23%;
+  }
   .print-tip {
     position: absolute;
     z-index: 2;
     left: 11%;
     right: 11%;
-    bottom: 2.2%;
+    bottom: 1.5mm;
     margin: 0;
     font-size: 6pt;
     line-height: 1.2;
