@@ -57,6 +57,8 @@ import { Input } from '@/components/ui/input';
 import { AnswerGrid } from '@/components/answer-grid';
 import { CorrectionPanel } from '@/components/correction-panel';
 import { PrintableSheet } from '@/components/printable-sheet';
+import { SessionMetadataEditor } from '@/components/session-metadata-editor';
+import { StatisticsExportButton } from '@/components/statistics-export-button';
 import { unauthorizedAccountMessage } from '@/lib/access';
 import { calculateAnalytics } from '@/lib/analytics';
 import { auth, firebaseConfigured } from '@/lib/firebase';
@@ -678,6 +680,7 @@ function AnalyticsPanel({ bundle }: { bundle: SessionBundle }) {
   }));
   return (
     <div className="analytics-layout">
+      <StatisticsExportButton bundle={bundle} />
       <div className="metric-grid">
         <div className="metric-card">
           <span>Provas corrigidas</span>
@@ -893,13 +896,23 @@ function SessionWorkspace({
             {bundle.session.questionCount} questões
           </p>
         </div>
-        <Button
-          variant="outline"
-          title="Gera o gabarito padronizado em uma coluna. Salve como PDF para usar no Canva."
-          onClick={() => window.print()}
-        >
-          <FileDown /> Imprimir folha
-        </Button>
+        <div className="session-header-actions">
+          <SessionMetadataEditor
+            session={bundle.session}
+            userId={userId}
+            onSaved={async () => {
+              await reload();
+              onChanged();
+            }}
+          />
+          <Button
+            variant="outline"
+            title="Gera o gabarito padronizado em uma coluna. Salve como PDF para usar no Canva."
+            onClick={() => window.print()}
+          >
+            <FileDown /> Imprimir folha
+          </Button>
+        </div>
       </div>
       <nav className="tabs">
         <button

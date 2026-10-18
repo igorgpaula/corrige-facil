@@ -348,7 +348,7 @@ export function CorrectionPanel({
             <h3>Fotografe somente as respostas</h3>
             <p>
               {mode === 'standard'
-                ? 'Enquadre de perto o quadro completo: quatro quadrados e indicação de orientação para cima. Folhas padronizadas anteriores continuam compatíveis.'
+                ? 'Enquadre de perto o quadro completo: quatro quadrados e os dois pontos de identificação no alto. Folhas padronizadas anteriores continuam compatíveis.'
                 : 'Inclua A–E de todas as questões. Se houver dúvida, o app pedirá quatro pontos.'}
             </p>
             <div className="source-actions">

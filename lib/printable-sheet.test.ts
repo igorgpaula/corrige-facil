@@ -54,7 +54,10 @@ it.each([1, 2, 10, 25, 26, 50])(
     expect(html.match(/class="print-marker /g)).toHaveLength(4);
     expect(html).toContain('print-orientation-dot');
     expect(html).toContain('print-layout-dot');
-    expect(html).toContain('GABARITO PADRONIZADO · 1 COLUNA');
+    expect(html).not.toContain('print-heading');
+    expect(html).not.toContain('print-tip');
+    expect(html).not.toContain('Avaliação de teste');
+    expect(html).not.toContain('Aluno(a)');
     expect(html).toContain('data-layout="single-column"');
     expect(html).not.toContain('print-card wide');
     expect(html.match(/class="print-question"/g)).toHaveLength(count);
@@ -67,7 +70,11 @@ it.each(Array.from({ length: 50 }, (_, i) => i + 1))(
   (count) => {
     const layout = getStandardSheetLayout(count);
     expect(layout.columns).toBe(1);
-    expect(layout.heightMm + 0.9).toBeLessThan(273);
+    expect(layout.heightMm).toBeLessThan(273);
+    expect(layout.heightMm).toBeCloseTo(
+      Math.max(36, 24 + (count - 1) * (count > 25 ? 4.4 : 7.4)),
+    );
+    expect(coordinatesFirstY(count)).toBeCloseTo(14);
     const coordinates = Array.from({ length: count }, (_, index) =>
       getQuestionCoordinates(index, count),
     );
@@ -84,6 +91,14 @@ it.each(Array.from({ length: 50 }, (_, i) => i + 1))(
     }
   },
 );
+function coordinatesFirstY(count: number) {
+  const layout = getStandardSheetLayout(count);
+  return (
+    layout.markerInsetY +
+    getQuestionCoordinates(0, count).y *
+      (layout.heightMm - 2 * layout.markerInsetY)
+  );
+}
 it('mantém a folha fora do contêiner oculto na impressão, sem forçar uma segunda página', () => {
   const app = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
   const homeIndex = app.indexOf('export default function Home()');

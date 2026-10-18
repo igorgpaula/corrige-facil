@@ -248,6 +248,39 @@ describe.skipIf(!host)('regras Firestore — somente no emulador local', () => {
       ).status,
     ).toBe(403);
   });
+  it('permite editar identificação bloqueada, mas não gabarito, pontuação ou dados de outro professor', async () => {
+    const path = 'users/teacher-one/sessions/metadata';
+    await commit([write(path, session(10, true))]);
+    const patch = (data: Record<string, unknown>) => ({
+      ...write(path, data),
+      updateMask: { fieldPaths: Object.keys(data) },
+    });
+    expect(
+      (
+        await commit(
+          [
+            patch({
+              title: 'Novo título',
+              className: '8º B',
+              updatedAt: new Date(),
+            }),
+          ],
+          owner,
+        )
+      ).status,
+    ).toBe(200);
+    for (const data of [
+      { answerKey: Array(10).fill('B') },
+      { pointsPerQuestion: 2 },
+      { questionCount: 9 },
+      { title: 'a'.repeat(201) },
+      { image: 'data:image/png;base64,test' },
+    ])
+      expect((await commit([patch(data)], owner)).status).toBe(403);
+    expect(
+      (await commit([patch({ title: 'Outro professor' })], second)).status,
+    ).toBe(403);
+  });
   it('salva a primeira correção e trava a sessão na mesma transação atômica', async () => {
     const path = 'users/teacher-one/sessions/first';
     await commit([write(path, session())]);

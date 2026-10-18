@@ -20,7 +20,7 @@ export function makeAnswerSheet(
     tilt = 0,
     pencil = false,
     blue = false,
-    sheetVersion = 3 as StandardSheetVersion,
+    sheetVersion = 4 as StandardSheetVersion,
   } = {},
 ) {
   const width = 600;
@@ -66,6 +66,7 @@ export function makeAnswerSheet(
         if (dx * dx + dy * dy < 49) {
           ink(84 + dx, height * topMarker + dy);
           if (sheetVersion === 3) ink(138 + dx, height * topMarker + dy);
+          if (sheetVersion === 4) ink(192 + dx, height * topMarker + dy);
         }
   } else {
     // Dense heading and the dash before A must never become a row or column.

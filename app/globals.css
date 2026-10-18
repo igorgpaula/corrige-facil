@@ -961,6 +961,34 @@ footer svg {
   padding: 42px 0 20px;
 }
 .page-title-row,
+.session-header-actions,
+.analytics-actions,
+.dialog-actions,
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.analytics-actions {
+  margin-bottom: 18px;
+  justify-content: flex-end;
+}
+.session-dialog {
+  max-width: min(520px, calc(100vw - 32px));
+}
+.metadata-form {
+  display: grid;
+  gap: 16px;
+}
+.metadata-form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+.dialog-actions {
+  justify-content: flex-end;
+}
 .session-header {
   display: flex;
   align-items: flex-end;
@@ -1999,7 +2027,7 @@ footer svg {
     width: 100mm;
     max-width: 100%;
     overflow: hidden;
-    border: 0.45mm solid #111;
+    border: 0;
     background: #fff;
   }
   .print-marker {
@@ -2113,7 +2141,7 @@ footer svg {
     transform: translate(-50%, -50%);
   }
   .print-layout-dot {
-    left: 23%;
+    left: 32%;
   }
   .print-tip {
     position: absolute;

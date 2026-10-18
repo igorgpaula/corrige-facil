@@ -98,7 +98,7 @@ service cloud.firestore {
         allow read, delete: if owns(uid);
         allow create: if owns(uid) && validSession(uid, request.resource.data) && request.resource.data.lockedAt == null;
         allow update: if owns(uid) && validSession(uid, request.resource.data)
-          && (resource.data.lockedAt == null || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt','answerSheetTemplateId']));
+          && (resource.data.lockedAt == null || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt','answerSheetTemplateId','title','className']));
         match /questions/{questionId} {
           allow read: if owns(uid);
           allow delete: if owns(uid)

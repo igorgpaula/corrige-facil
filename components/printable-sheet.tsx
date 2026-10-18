@@ -5,10 +5,6 @@ import {
 } from '@/lib/sheet-geometry';
 import { LETTERS, type ExamSession } from '@/lib/types';
 
-function formatScore(value: number) {
-  return value.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
-}
-
 export function PrintableSheet({ session }: { session: ExamSession }) {
   const layout = getStandardSheetLayout(session.questionCount);
   const position = (value: number, axis: 'x' | 'y') =>
@@ -33,18 +29,6 @@ export function PrintableSheet({ session }: { session: ExamSession }) {
         <div className="print-marker marker-br" />
         <div className="print-orientation-dot" />
         <div className="print-layout-dot" />
-        <div className="print-heading">
-          <span>↑ GABARITO PADRONIZADO · 1 COLUNA</span>
-          <h1>{session.title}</h1>
-          <div className="student-fields">
-            <p>Aluno(a): __________________________________</p>
-            <p>Turma: {session.className || '______________'}</p>
-          </div>
-          <p className="print-config">
-            {session.questionCount} questões ·{' '}
-            {formatScore(session.pointsPerQuestion)} ponto(s) cada
-          </p>
-        </div>
         <div className="print-questions">
           {Array.from({ length: session.questionCount }, (_, question) => {
             const { y, bubbleXs, numberX } = getQuestionCoordinates(
@@ -83,9 +67,6 @@ export function PrintableSheet({ session }: { session: ExamSession }) {
             );
           })}
         </div>
-        <p className="print-tip">
-          Preencha completamente um círculo e fotografe somente este quadro.
-        </p>
       </div>
     </section>
   );

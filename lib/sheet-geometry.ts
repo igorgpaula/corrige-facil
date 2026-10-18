@@ -1,12 +1,12 @@
 import { LETTERS, type AnswerReading } from './types';
 
-export type StandardSheetVersion = 2 | 3;
+export type StandardSheetVersion = 2 | 3 | 4;
 
 // V2 is retained for already printed sheets. New sheets use a single column
 // and a second orientation dot, so the reader can identify the layout locally.
 export function getStandardSheetLayout(
   count: number,
-  version: StandardSheetVersion = 3,
+  version: StandardSheetVersion = 4,
 ) {
   if (!Number.isInteger(count) || count < 1 || count > 50)
     throw new Error('O quadro deve ter entre 1 e 50 questões.');
@@ -15,14 +15,16 @@ export function getStandardSheetLayout(
   const heightMm =
     version === 2
       ? Math.min(250, Math.max(90, 58 + Math.ceil(count / oldColumns) * 7.4))
-      : Math.max(90, 44 + (count - 1) * pitchMm);
+      : version === 3
+        ? Math.max(90, 44 + (count - 1) * pitchMm)
+        : Math.max(36, 24 + (count - 1) * pitchMm);
   return {
     version,
     columns: version === 2 ? oldColumns : 1,
     widthMm: version === 2 && oldColumns === 2 ? 186 : 100,
     heightMm,
     markerInsetY: version === 2 ? heightMm * 0.04 : 5,
-    bubbleDiameterMm: version === 3 && count > 25 ? 4 : 5,
+    bubbleDiameterMm: version >= 3 && count > 25 ? 4 : 5,
     pitchMm,
   };
 }
@@ -30,13 +32,15 @@ export function getStandardSheetLayout(
 export function getQuestionCoordinates(
   index: number,
   count: number,
-  version: StandardSheetVersion = 3,
+  version: StandardSheetVersion = 4,
 ) {
-  if (version === 3) {
+  if (version >= 3) {
     const layout = getStandardSheetLayout(count, version);
     return {
       y:
-        (32 + index * layout.pitchMm - layout.markerInsetY) /
+        ((version === 4 ? 14 : 32) +
+          index * layout.pitchMm -
+          layout.markerInsetY) /
         (layout.heightMm - layout.markerInsetY * 2),
       bubbleXs: [0.38, 0.5, 0.62, 0.74, 0.86],
       numberX: 0.19,

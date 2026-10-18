@@ -176,6 +176,44 @@ export async function createSession(
   };
 }
 
+export async function updateSessionMetadata(
+  uid: string,
+  sessionId: string,
+  metadata: Pick<ExamSession, 'title' | 'className'>,
+): Promise<void> {
+  if (
+    !metadata ||
+    Object.keys(metadata).some(
+      (key) => !['title', 'className'].includes(key),
+    ) ||
+    typeof metadata.title !== 'string' ||
+    typeof metadata.className !== 'string' ||
+    !metadata.title.trim() ||
+    !metadata.className.trim() ||
+    metadata.title.trim().length > 200 ||
+    metadata.className.trim().length > 200
+  )
+    throw new Error('Informe título e turma, com até 200 caracteres cada.');
+  const values = {
+    title: metadata.title.trim(),
+    className: metadata.className.trim(),
+  };
+  if (!firebaseConfigured || !db) {
+    const database = readLocal();
+    const bundle = (database[uid] ?? []).find(
+      (item) => item.session.id === sessionId,
+    );
+    if (!bundle) throw new Error('Sessão não encontrada.');
+    Object.assign(bundle.session, values, { updatedAt: now() });
+    writeLocal(database);
+    return;
+  }
+  await updateDoc(doc(db, 'users', uid, 'sessions', sessionId), {
+    ...values,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function updateSessionDraft(
   uid: string,
   sessionId: string,

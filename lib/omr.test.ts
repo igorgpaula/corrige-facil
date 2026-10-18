@@ -94,6 +94,7 @@ describe('geometria e confiança', () => {
     [1, 2, 8, 10, 15, 25, 26, 30, 50].flatMap((count) => [
       { count, sheetVersion: 2 as const },
       { count, sheetVersion: 3 as const },
+      { count, sheetVersion: 4 as const },
     ]),
   )(
     'lê quadro de $count questões na versão $sheetVersion, incluindo folhas antigas',
@@ -125,7 +126,7 @@ describe('geometria e confiança', () => {
     const layout = getStandardSheetLayout(10);
     const y = (image.height * layout.markerInsetY) / layout.heightMm;
     for (let py = Math.floor(y - 12); py <= y + 12; py++)
-      for (let px = 125; px <= 150; px++) {
+      for (let px = 180; px <= 205; px++) {
         const offset = (py * image.width + px) * 4;
         image.pixels[offset] =
           image.pixels[offset + 1] =

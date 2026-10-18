@@ -8,6 +8,7 @@ import {
   saveAnswerSheetTemplate,
   saveCorrection,
   updateSessionDraft,
+  updateSessionMetadata,
 } from './repository';
 import type { AnswerReading, AnswerSheetTemplate, SessionDraft } from './types';
 
@@ -43,6 +44,56 @@ const readings: AnswerReading[] = Array.from({ length: 10 }, () => ({
   source: 'scan',
   status: 'read',
 }));
+it('edita somente título e turma antes e depois da primeira correção', async () => {
+  const bundle = await createSession('one', draft);
+  await updateSessionMetadata('one', bundle.session.id, {
+    title: '  Novo título  ',
+    className: '8º A',
+  });
+  expect((await loadSession('one', bundle.session.id))!.session.title).toBe(
+    'Novo título',
+  );
+  await saveCorrection('one', bundle.session.id, {
+    studentLabel: 'Aluno teste',
+    answers: Array(10).fill('A'),
+    readings,
+    correctCount: 10,
+    score: 10,
+    maximumScore: 10,
+  });
+  const before = JSON.parse(
+    JSON.stringify(await loadSession('one', bundle.session.id)),
+  );
+  await updateSessionMetadata('one', bundle.session.id, {
+    title: 'Corrigida',
+    className: '8º B',
+  });
+  const after = (await loadSession('one', bundle.session.id))!;
+  expect(after.session.title).toBe('Corrigida');
+  expect(after.session.className).toBe('8º B');
+  expect(after.corrections).toEqual(before.corrections);
+  expect(after.questions).toEqual(before.questions);
+  expect(after.session.lockedAt).toBe(before.session.lockedAt);
+  expect(after.session.answerKey).toEqual(before.session.answerKey);
+  expect(after.session.pointsPerQuestion).toBe(
+    before.session.pointsPerQuestion,
+  );
+  await expect(
+    updateSessionMetadata('two', bundle.session.id, {
+      title: 'Proibido',
+      className: 'Outra',
+    }),
+  ).rejects.toThrow(/encontrada/);
+  for (const metadata of [
+    { title: '', className: 'A' },
+    { title: 'A', className: ' ' },
+    { title: 'a'.repeat(201), className: 'A' },
+    { title: 'A', className: 'A', answerKey: ['B'] },
+  ])
+    await expect(
+      updateSessionMetadata('one', bundle.session.id, metadata),
+    ).rejects.toThrow();
+});
 it('salva e isola modelos de dois usuários, sem permitir fotos ou campos extras', async () => {
   await saveAnswerSheetTemplate('one', model);
   expect(await listAnswerSheetTemplates('one')).toHaveLength(1);

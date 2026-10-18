@@ -413,18 +413,30 @@ function standardLayoutSignature(
   const strip = new cv.Mat();
   try {
     cv.warpPerspective(binary, strip, h, new cv.Size(900, 24));
-    let dark = 0;
-    let total = 0;
-    for (let y = 0; y <= 8; y++)
-      for (let dx = -8; dx <= 8; dx++) {
-        if (dx * dx + y * y > 64) continue;
-        dark += strip.data[y * 900 + 180 + dx] / 255;
-        total++;
-      }
-    const score = dark / Math.max(1, total);
+    const dotScore = (x: number) => {
+      let dark = 0;
+      let total = 0;
+      for (let y = 0; y <= 8; y++)
+        for (let dx = -8; dx <= 8; dx++) {
+          if (dx * dx + y * y > 64) continue;
+          dark += strip.data[y * 900 + x + dx] / 255;
+          total++;
+        }
+      return dark / Math.max(1, total);
+    };
+    const previous = dotScore(180);
+    const compact = dotScore(270);
     return {
-      version: score >= 0.65 ? (3 as const) : (2 as const),
-      ambiguous: score > 0.2 && score < 0.65,
+      version:
+        compact >= 0.65
+          ? (4 as const)
+          : previous >= 0.65
+            ? (3 as const)
+            : (2 as const),
+      ambiguous:
+        (compact > 0.2 && previous > 0.2) ||
+        (compact > 0.2 && compact < 0.65) ||
+        (previous > 0.2 && previous < 0.65),
     };
   } finally {
     h.delete();
@@ -611,7 +623,7 @@ export function analyzeSheet(
     const signature = standard
       ? standardLayoutSignature(cv, binary, geometry.anchors)
       : null;
-    const layout = getStandardSheetLayout(count, signature?.version ?? 3);
+    const layout = getStandardSheetLayout(count, signature?.version ?? 4);
     if (standard) {
       geometry.radius =
         (distance(geometry.anchors[0], geometry.anchors[1]) *
@@ -714,7 +726,9 @@ export function analyzeSheet(
       // Markers alone cannot approve the wrong layout (e.g. a missing version
       // dot). Require the predicted circles to agree with the printed grid.
       let matched = 0;
-      for (const row of points)
+      const rowMatches: number[] = [];
+      for (const row of points) {
+        let rowMatched = 0;
         for (const p of row) {
           const photo = project(inverse.data64F, p.x, p.y);
           if (
@@ -722,10 +736,19 @@ export function analyzeSheet(
               (circle) => distance(circle, photo) < geometry.radius * 0.85,
             )
           )
-            matched++;
+            rowMatched++;
         }
+        rowMatches.push(rowMatched);
+        matched += rowMatched;
+      }
       geometry.matched = matched;
-      if (matched < count * 5 * 0.55)
+      // The first and last rows anchor the numbering. A partial interior
+      // match can otherwise hide a missing layout dot and a shifted grid.
+      if (
+        matched < count * 5 * 0.55 ||
+        rowMatches[0] < 4 ||
+        rowMatches.at(-1)! < 4
+      )
         geometry.confidence = Math.min(geometry.confidence, 0.59);
     }
     const scores = points.map((row) =>
