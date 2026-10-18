@@ -55,6 +55,7 @@ O GitHub Actions executa testes, verifica os tipos e publica automaticamente no 
 - Em **Corrigir**, escolha **Quadro atual** para folhas já impressas ou **Quadro padronizado · versão 2** para a nova folha gerada pelo app.
 - **Cadastrar modelo de respostas** recebe uma foto do quadro **em branco**. Não é a importação dos enunciados da prova. Confira a sobreposição antes de cadastrar.
 - O quadro V2 tem quatro marcadores, uma indicação de orientação e letras fora dos círculos. Folhas antigas com marcadores continuam utilizáveis mediante alinhamento assistido.
+- **Imprimir folha** gera um único quadro em A4 retrato. Use escala de 100% e, se desejar, desative cabeçalhos e rodapés do navegador. Preserve os quatro marcadores ao inserir o quadro no canto da prova e ao fotografar. Na correção, selecione **Quadro padronizado · versão 2**.
 - Quando a geometria não for segura, informe A e E da primeira e da última questão. Há ampliação e ajuste pelas setas do teclado. No quadro padronizado, indique os centros dos quatro marcadores.
 - Letras sugeridas não são respostas aceitas. Revise as pendências, confirme branco ou anule uma marcação múltipla. A nota é provisória até resolver todas as pendências.
 - Confiança é uma estimativa heurística, não uma probabilidade calibrada. A revisão visual continua importante, inclusive nas leituras de confiança alta.

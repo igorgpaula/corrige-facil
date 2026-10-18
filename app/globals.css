@@ -1961,41 +1961,55 @@ footer svg {
 @media print {
   @page {
     size: A4 portrait;
-    margin: 0;
+    margin: 12mm;
   }
-  body {
-    background: white;
+  html,
+  body,
+  .app-shell {
+    width: auto !important;
+    min-width: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    color: #000;
+    background: #fff !important;
+    font-family: Arial, sans-serif;
   }
   .app-shell > :not(.print-sheet) {
     display: none !important;
   }
-  .print-sheet {
+  .app-shell > .print-sheet {
     position: relative;
-    display: block;
-    width: 210mm;
-    height: 297mm;
+    display: block !important;
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
     color: #000;
     background: #fff;
   }
   .print-card {
-    position: absolute;
-    top: 12mm;
-    right: 12mm;
+    position: relative;
+    margin: 0 0 0 auto;
     width: 100mm;
+    max-width: 100%;
     overflow: hidden;
     border: 0.45mm solid #111;
     background: #fff;
   }
   .print-card.wide {
-    left: 12mm;
-    right: 12mm;
-    width: auto;
+    width: 186mm;
   }
   .print-marker {
     position: absolute;
     z-index: 3;
     width: 6mm;
     height: 6mm;
+    border: 3mm solid #000;
     transform: translate(-50%, -50%);
     background: #000;
   }
@@ -2018,34 +2032,44 @@ footer svg {
   .print-heading {
     position: absolute;
     z-index: 2;
-    top: 8%;
+    top: 5%;
     left: 15%;
     right: 15%;
     text-align: center;
   }
   .print-heading > span {
-    font-size: 7pt;
-    letter-spacing: 1.5px;
+    display: block;
+    font-size: 6pt;
+    line-height: 1.1;
+    letter-spacing: 0.4px;
     font-weight: 800;
   }
   .print-heading h1 {
-    margin: 0.5mm 0 2.5mm;
-    font-size: 15pt;
-    line-height: 1;
+    margin: 0.5mm 0;
+    font-size: 10pt;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .student-fields {
     display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 4mm;
-    font-size: 7.5pt;
+    grid-template-columns: 1fr;
+    gap: 0;
+    text-align: left;
+    font-size: 6.5pt;
+    line-height: 1.1;
   }
   .student-fields p {
     margin: 0;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .print-config {
-    margin: 2mm 0 0;
-    font-size: 7pt;
+    margin: 0.6mm 0 0;
+    font-size: 6pt;
+    line-height: 1.1;
     font-weight: 700;
   }
   .print-questions {
@@ -2058,7 +2082,9 @@ footer svg {
     transform: translate(-50%, -50%);
   }
   .print-question-number {
-    font: 800 7.5pt var(--font-geist-mono);
+    font:
+      800 7.5pt 'Courier New',
+      monospace;
   }
   .print-option {
     display: grid;
@@ -2071,6 +2097,8 @@ footer svg {
   .print-option i {
     position: absolute;
     left: -3.8mm;
+    top: 50%;
+    transform: translateY(-50%);
     font-style: normal;
     font-size: 6.5pt;
   }
@@ -2080,6 +2108,7 @@ footer svg {
     top: 4%;
     width: 2.6mm;
     height: 2.6mm;
+    border: 1.3mm solid #000;
     border-radius: 50%;
     background: #000;
     transform: translate(-50%, -50%);
