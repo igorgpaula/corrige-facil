@@ -135,55 +135,59 @@ async function extractPdf(
     workerAssetUrl,
     window.location.origin,
   );
-  const pdfDocument = await pdfjs.getDocument({ data: await file.arrayBuffer() })
-    .promise;
-  if (pdfDocument.numPages > MAX_PAGES)
-    throw new Error(`O PDF pode ter no máximo ${MAX_PAGES} páginas.`);
-  const sections: Array<{ text: string; confidence: number }> = [];
+  const loadingTask = pdfjs.getDocument({ data: await file.arrayBuffer() });
+  const pdfDocument = await loadingTask.promise;
 
-  for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
-    if (signal.aborted) throw new DOMException('Operação cancelada.', 'AbortError');
-    onProgress({
-      page: pageNumber,
-      totalPages: pdfDocument.numPages,
-      progress: (pageNumber - 1) / pdfDocument.numPages,
-      message: `Lendo página ${pageNumber} de ${pdfDocument.numPages}…`,
-    });
-    const page = await pdfDocument.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const embedded = content.items
-      .map((item) => {
-        if (!('str' in item)) return '';
-        return `${item.str}${'hasEOL' in item && item.hasEOL ? '\n' : ' '}`;
-      })
-      .join('');
-    if (embedded.replace(/\s/g, '').length > 80) {
-      sections.push({ text: embedded, confidence: 0.98 });
-      page.cleanup();
-      continue;
-    }
-    const viewport = page.getViewport({ scale: 1.7 });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const context = canvas.getContext('2d', { alpha: false });
-    if (!context) throw new Error('Não foi possível preparar a página para OCR.');
-    await page.render({ canvasContext: context, viewport, canvas }).promise;
-    const recognized = await recognizeImage(canvas, signal, (value, message) =>
+  try {
+    if (pdfDocument.numPages > MAX_PAGES)
+      throw new Error(`O PDF pode ter no máximo ${MAX_PAGES} páginas.`);
+    const sections: Array<{ text: string; confidence: number }> = [];
+
+    for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+      if (signal.aborted) throw new DOMException('Operação cancelada.', 'AbortError');
       onProgress({
         page: pageNumber,
         totalPages: pdfDocument.numPages,
-        progress: (pageNumber - 1 + value) / pdfDocument.numPages,
-        message,
-      }),
-    );
-    sections.push(recognized);
-    canvas.width = 1;
-    canvas.height = 1;
-    page.cleanup();
+        progress: (pageNumber - 1) / pdfDocument.numPages,
+        message: `Lendo página ${pageNumber} de ${pdfDocument.numPages}…`,
+      });
+      const page = await pdfDocument.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const embedded = content.items
+        .map((item) => {
+          if (!('str' in item)) return '';
+          return `${item.str}${'hasEOL' in item && item.hasEOL ? '\n' : ' '}`;
+        })
+        .join('');
+      if (embedded.replace(/\s/g, '').length > 80) {
+        sections.push({ text: embedded, confidence: 0.98 });
+        page.cleanup();
+        continue;
+      }
+      const viewport = page.getViewport({ scale: 1.7 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error('Não foi possível preparar a página para OCR.');
+      await page.render({ canvasContext: context, viewport, canvas }).promise;
+      const recognized = await recognizeImage(canvas, signal, (value, message) =>
+        onProgress({
+          page: pageNumber,
+          totalPages: pdfDocument.numPages,
+          progress: (pageNumber - 1 + value) / pdfDocument.numPages,
+          message,
+        }),
+      );
+      sections.push(recognized);
+      canvas.width = 1;
+      canvas.height = 1;
+      page.cleanup();
+    }
+    return sections;
+  } finally {
+    await loadingTask.destroy();
   }
-  await (pdfDocument as unknown as { destroy: () => Promise<void> }).destroy();
-  return sections;
 }
 
 export async function readBlankExam(
