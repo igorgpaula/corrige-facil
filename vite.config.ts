@@ -56,6 +56,7 @@ export default defineConfig(async () => {
   }
 
   return {
+    worker: { format: 'es' as const },
     css: { postcss: { plugins: [tailwindcss()] } },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }

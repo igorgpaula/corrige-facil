@@ -2,10 +2,8 @@
 
 import {
   type ChangeEvent,
-  type CSSProperties,
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -15,7 +13,6 @@ import {
   ArrowDown,
   ArrowUp,
   BarChart3,
-  Camera,
   Check,
   ChevronLeft,
   ClipboardCheck,
@@ -23,7 +20,6 @@ import {
   FileDown,
   FileText,
   GraduationCap,
-  ImagePlus,
   LayoutDashboard,
   LockKeyhole,
   LogIn,
@@ -58,14 +54,12 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { AnswerGrid } from '@/components/answer-grid';
+import { CorrectionPanel } from '@/components/correction-panel';
 import { unauthorizedAccountMessage } from '@/lib/access';
 import { calculateAnalytics } from '@/lib/analytics';
 import { auth, firebaseConfigured } from '@/lib/firebase';
-import {
-  answersFromReadings,
-  getQuestionCoordinates,
-  readAnswerSheet,
-} from '@/lib/omr';
+import { getQuestionCoordinates } from '@/lib/sheet-geometry';
 import { readBlankExam } from '@/lib/ocr';
 import {
   createSession,
@@ -76,13 +70,11 @@ import {
   hasPlatformAccess,
   listSessions,
   loadSession,
-  saveCorrection,
   setSessionStatus,
   updateSessionDraft,
 } from '@/lib/repository';
 import {
   LETTERS,
-  type AnswerReading,
   type Answers,
   type ExamSession,
   type QuestionDefinition,
@@ -120,93 +112,6 @@ function emptyQuestions(size: number): QuestionDefinition[] {
   }));
 }
 
-function AnswerGrid({
-  answers,
-  onChange,
-  compact = false,
-  answerKey,
-  readings,
-}: {
-  answers: Answers;
-  onChange: (next: Answers, question: number) => void;
-  compact?: boolean;
-  answerKey?: Answers;
-  readings?: AnswerReading[];
-}) {
-  const groupId = useId();
-  return (
-    <div className={compact ? 'answer-grid compact' : 'answer-grid'}>
-      {answers.map((answer, question) => {
-        const isIncorrect = Boolean(
-          answer && answerKey?.[question] && answer !== answerKey[question],
-        );
-        const reading = readings?.[question];
-        const confidenceClass = !reading?.answer
-          ? 'missing'
-          : reading.source === 'manual'
-            ? 'manual'
-            : reading.confidence >= 80
-              ? 'high'
-              : reading.confidence >= 60
-                ? 'medium'
-                : 'low';
-        return (
-          <div
-            className={isIncorrect ? 'answer-row incorrect' : 'answer-row'}
-            key={question}
-          >
-            <span className="question-number">
-              {String(question + 1).padStart(2, '0')}
-            </span>
-            <div
-              className="options"
-              role="radiogroup"
-              aria-label={`Questão ${question + 1}`}
-            >
-              {LETTERS.map((letter) => {
-                const optionId = `${groupId}-${question}-${letter}`;
-                return (
-                  <label
-                    className={
-                      answer === letter ? 'bubble selected' : 'bubble'
-                    }
-                    htmlFor={optionId}
-                    key={letter}
-                  >
-                    <input
-                      checked={answer === letter}
-                      className="answer-radio"
-                      id={optionId}
-                      name={`${groupId}-question-${question}`}
-                      onChange={() => {
-                        const next = [...answers];
-                        next[question] = letter;
-                        onChange(next, question);
-                      }}
-                      type="radio"
-                      value={letter}
-                    />
-                    {letter}
-                  </label>
-                );
-              })}
-            </div>
-            {reading && (
-              <span className={`confidence-badge ${confidenceClass}`}>
-                {reading.source === 'manual'
-                  ? 'Confirmada manualmente'
-                  : reading.answer
-                    ? `${reading.confidence}% confiança`
-                    : 'Não identificada'}
-              </span>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function PrintableSheet({ session }: { session: ExamSession }) {
   const columns = session.questionCount > 25 ? 2 : 1;
   const rows = Math.ceil(session.questionCount / columns);
@@ -223,8 +128,9 @@ function PrintableSheet({ session }: { session: ExamSession }) {
         <div className="print-marker marker-tr" />
         <div className="print-marker marker-bl" />
         <div className="print-marker marker-br" />
+        <div className="print-orientation-dot" />
         <div className="print-heading">
-          <span>FOLHA DE RESPOSTAS</span>
+          <span>↑ FOLHA DE RESPOSTAS · MODELO V2</span>
           <h1>{session.title}</h1>
           <div className="student-fields">
             <p>Aluno(a): __________________________________</p>
@@ -276,7 +182,13 @@ function PrintableSheet({ session }: { session: ExamSession }) {
   );
 }
 
-function LoginScreen({ onLogin, error }: { onLogin: () => void; error: string }) {
+function LoginScreen({
+  onLogin,
+  error,
+}: {
+  onLogin: () => void;
+  error: string;
+}) {
   return (
     <main className="login-shell">
       <section className="login-card">
@@ -284,7 +196,9 @@ function LoginScreen({ onLogin, error }: { onLogin: () => void; error: string })
           <GraduationCap />
         </div>
         <p className="section-kicker">CORREÇÃO E INSIGHTS DA TURMA</p>
-        <h1>Corrige Fácil <span className="version-badge">v2.0</span></h1>
+        <h1>
+          Corrige Fácil <span className="version-badge">v2.0</span>
+        </h1>
         <p>
           Crie sessões, corrija pelo celular e descubra quais questões foram os
           principais gargalos da turma.
@@ -395,9 +309,7 @@ function CreateSessionView({
   const [className, setClassName] = useState(
     initialBundle?.session.className ?? '',
   );
-  const [subject, setSubject] = useState(
-    initialBundle?.session.subject ?? '',
-  );
+  const [subject, setSubject] = useState(initialBundle?.session.subject ?? '');
   const [questionCount, setQuestionCount] = useState(
     initialBundle?.session.questionCount ?? 10,
   );
@@ -407,8 +319,8 @@ function CreateSessionView({
   const [answerKey, setAnswerKey] = useState<Answers>(
     initialBundle?.session.answerKey ?? Array(10).fill(null),
   );
-  const [questions, setQuestions] = useState(() =>
-    initialBundle?.questions ?? emptyQuestions(10),
+  const [questions, setQuestions] = useState(
+    () => initialBundle?.questions ?? emptyQuestions(10),
   );
   const [saving, setSaving] = useState(false);
   const [ocrStatus, setOcrStatus] = useState('');
@@ -426,14 +338,16 @@ function CreateSessionView({
     setQuestionCount(next);
     setAnswerKey((current) => resizeAnswers(current, next));
     setQuestions((current) =>
-      Array.from({ length: next }, (_, index) =>
-        current[index] ?? {
-          id: `q_${index + 1}`,
-          order: index + 1,
-          prompt: '',
-          options: {},
-          ocrConfidence: null,
-        },
+      Array.from(
+        { length: next },
+        (_, index) =>
+          current[index] ?? {
+            id: `q_${index + 1}`,
+            order: index + 1,
+            prompt: '',
+            options: {},
+            ocrConfidence: null,
+          },
       ).map((item, index) => ({
         ...item,
         id: `q_${index + 1}`,
@@ -570,7 +484,9 @@ function CreateSessionView({
       );
     } catch (cause) {
       setError(
-          cause instanceof Error ? cause.message : 'Não foi possível salvar a sessão.',
+        cause instanceof Error
+          ? cause.message
+          : 'Não foi possível salvar a sessão.',
       );
     } finally {
       setSaving(false);
@@ -587,7 +503,9 @@ function CreateSessionView({
           <p className="section-kicker">
             {initialBundle ? 'EDITAR RASCUNHO' : 'NOVA SESSÃO'}
           </p>
-          <h2>{initialBundle ? 'Revise a configuração' : 'Configure a prova'}</h2>
+          <h2>
+            {initialBundle ? 'Revise a configuração' : 'Configure a prova'}
+          </h2>
           <p>Você pode preencher manualmente ou importar a prova em branco.</p>
         </div>
       </div>
@@ -702,8 +620,7 @@ function CreateSessionView({
         {questions.map((question, index) => (
           <details
             className={
-              question.ocrConfidence !== null &&
-              question.ocrConfidence < 0.75
+              question.ocrConfidence !== null && question.ocrConfidence < 0.75
                 ? 'question-card low-ocr'
                 : 'question-card'
             }
@@ -822,11 +739,7 @@ function CreateSessionView({
 function AnalyticsPanel({ bundle }: { bundle: SessionBundle }) {
   const analytics = useMemo(
     () =>
-      calculateAnalytics(
-        bundle.session,
-        bundle.questions,
-        bundle.corrections,
-      ),
+      calculateAnalytics(bundle.session, bundle.questions, bundle.corrections),
     [bundle],
   );
   const questionChart = analytics.questionStats.map((item) => ({
@@ -964,235 +877,6 @@ function AnalyticsPanel({ bundle }: { bundle: SessionBundle }) {
   );
 }
 
-function CorrectionPanel({
-  bundle,
-  userId,
-  onReload,
-}: {
-  bundle: SessionBundle;
-  userId: string;
-  onReload: () => Promise<void>;
-}) {
-  const count = bundle.session.questionCount;
-  const [readings, setReadings] = useState<AnswerReading[]>(
-    Array.from({ length: count }, () => ({
-      answer: null,
-      confidence: 0,
-      source: 'scan',
-    })),
-  );
-  const [preview, setPreview] = useState<string | null>(null);
-  const [status, setStatus] = useState('Pronto para receber a foto.');
-  const [scanning, setScanning] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [studentLabel, setStudentLabel] = useState('');
-  const cameraInput = useRef<HTMLInputElement>(null);
-  const galleryInput = useRef<HTMLInputElement>(null);
-  const answers = answersFromReadings(readings);
-  const correct = answers.filter(
-    (answer, index) => answer && answer === bundle.session.answerKey[index],
-  ).length;
-  const score = correct * bundle.session.pointsPerQuestion;
-
-  const reset = () => {
-    setReadings(
-      Array.from({ length: count }, () => ({
-        answer: null,
-        confidence: 0,
-        source: 'scan',
-      })),
-    );
-    setPreview(null);
-    setStudentLabel('');
-    setStatus('Pronto para receber uma nova foto.');
-  };
-
-  const handlePhoto = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.currentTarget.files?.[0];
-    event.currentTarget.value = '';
-    if (!file) return;
-    setScanning(true);
-    setStatus('Analisando marcações no seu aparelho…');
-    try {
-      const result = await readAnswerSheet(file, count);
-      setReadings(result.readings);
-      setPreview(result.preview);
-      setStatus(
-        result.mode === 'free'
-          ? 'Leitura livre concluída. Revise as respostas e a confiança.'
-          : 'Leitura pelos marcadores concluída. Revise antes de salvar.',
-      );
-    } catch (cause) {
-      setStatus(
-        cause instanceof Error
-          ? cause.message
-          : 'Não foi possível analisar a foto.',
-      );
-    } finally {
-      setScanning(false);
-    }
-  };
-
-  const changeAnswers = (next: Answers, question: number) => {
-    setReadings((current) =>
-      current.map((reading, index) =>
-        index === question
-          ? { answer: next[index], confidence: 100, source: 'manual' }
-          : reading,
-      ),
-    );
-  };
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      await saveCorrection(userId, bundle.session.id, {
-        studentLabel: studentLabel.trim() || null,
-        answers,
-        readings,
-        correctCount: correct,
-        score,
-        maximumScore: count * bundle.session.pointsPerQuestion,
-      });
-      reset();
-      setStatus('Correção salva. Pronto para o próximo aluno.');
-      await onReload();
-    } catch (cause) {
-      setStatus(
-        cause instanceof Error
-          ? cause.message
-          : 'Não foi possível salvar a correção.',
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="correction-layout">
-      <article className="panel camera-panel">
-        {!preview ? (
-          <div className="camera-empty">
-            <div className="camera-icon">
-              <Camera />
-            </div>
-            <h3>Fotografe somente as respostas</h3>
-            <p>
-              Enquadre as linhas e as alternativas. A imagem será descartada
-              depois da revisão.
-            </p>
-            <input
-              ref={cameraInput}
-              hidden
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handlePhoto}
-            />
-            <input
-              ref={galleryInput}
-              hidden
-              type="file"
-              accept="image/*"
-              onChange={handlePhoto}
-            />
-            <div className="source-actions">
-              <Button
-                className="primary-action"
-                disabled={scanning}
-                onClick={() => cameraInput.current?.click()}
-              >
-                <Camera /> {scanning ? 'Analisando…' : 'Tirar foto'}
-              </Button>
-              <Button
-                className="gallery-action"
-                variant="outline"
-                disabled={scanning}
-                onClick={() => galleryInput.current?.click()}
-              >
-                <ImagePlus /> Escolher da galeria
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="photo-result">
-            {/* oxlint-disable-next-line next/no-img-element -- object URL local, discarded after review */}
-            <img src={preview} alt="Foto analisada" />
-            <div className="photo-badge">
-              <Check /> Foto analisada
-            </div>
-          </div>
-        )}
-        <p className="status-line" aria-live="polite">
-          {status}
-        </p>
-      </article>
-      <aside className="panel result-panel">
-        <div className="result-top">
-          <div>
-            <span className="panel-index">02</span>
-            <div>
-              <h3>Resultado</h3>
-              <p>
-                {answers.filter(Boolean).length}/{count} respostas identificadas
-              </p>
-            </div>
-          </div>
-          <Button
-            aria-label="Limpar correção"
-            size="icon"
-            variant="ghost"
-            onClick={reset}
-          >
-            <RotateCcw />
-          </Button>
-        </div>
-        <div
-          className="grade-ring"
-          style={
-            {
-              '--score': `${count ? (correct / count) * 100 : 0}%`,
-            } as CSSProperties
-          }
-        >
-          <div>
-            <strong>{formatScore(score)}</strong>
-            <span>
-              de {formatScore(count * bundle.session.pointsPerQuestion)}
-            </span>
-          </div>
-        </div>
-        <div className="student-field">
-          <label htmlFor="student-label">
-            Aluno ou código (opcional)
-            <Input
-              id="student-label"
-              value={studentLabel}
-              onChange={(event) => setStudentLabel(event.target.value)}
-              placeholder="Ex.: Ana ou 2026-014"
-            />
-          </label>
-        </div>
-        <h4>Revisão das respostas</h4>
-        <AnswerGrid
-          compact
-          answers={answers}
-          readings={readings}
-          answerKey={bundle.session.answerKey}
-          onChange={changeAnswers}
-        />
-        <Button
-          className="primary-action save-correction"
-          disabled={saving || !answers.some(Boolean)}
-          onClick={save}
-        >
-          <Save /> {saving ? 'Salvando…' : 'Salvar correção'}
-        </Button>
-      </aside>
-    </div>
-  );
-}
-
 function SessionWorkspace({
   initialBundle,
   userId,
@@ -1304,11 +988,7 @@ function SessionWorkspace({
         </button>
       </nav>
       {tab === 'correct' && (
-        <CorrectionPanel
-          bundle={bundle}
-          userId={userId}
-          onReload={reload}
-        />
+        <CorrectionPanel bundle={bundle} userId={userId} onReload={reload} />
       )}
       {tab === 'analytics' && <AnalyticsPanel bundle={bundle} />}
       {tab === 'settings' && (
@@ -1316,10 +996,27 @@ function SessionWorkspace({
           <article className="panel session-summary">
             <h3>Configuração da prova</h3>
             <dl>
-              <div><dt>Questões</dt><dd>{bundle.session.questionCount}</dd></div>
-              <div><dt>Valor por questão</dt><dd>{formatScore(bundle.session.pointsPerQuestion)}</dd></div>
-              <div><dt>Nota máxima</dt><dd>{formatScore(bundle.session.questionCount * bundle.session.pointsPerQuestion)}</dd></div>
-              <div><dt>Correções</dt><dd>{bundle.corrections.length}</dd></div>
+              <div>
+                <dt>Questões</dt>
+                <dd>{bundle.session.questionCount}</dd>
+              </div>
+              <div>
+                <dt>Valor por questão</dt>
+                <dd>{formatScore(bundle.session.pointsPerQuestion)}</dd>
+              </div>
+              <div>
+                <dt>Nota máxima</dt>
+                <dd>
+                  {formatScore(
+                    bundle.session.questionCount *
+                      bundle.session.pointsPerQuestion,
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Correções</dt>
+                <dd>{bundle.corrections.length}</dd>
+              </div>
             </dl>
             {bundle.session.lockedAt && (
               <p className="locked-note">
@@ -1392,7 +1089,9 @@ export default function Home() {
   const [sessions, setSessions] = useState<ExamSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [bundle, setBundle] = useState<SessionBundle | null>(null);
-  const [editingBundle, setEditingBundle] = useState<SessionBundle | null>(null);
+  const [editingBundle, setEditingBundle] = useState<SessionBundle | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!firebaseConfigured || !auth) return;
@@ -1460,8 +1159,7 @@ export default function Home() {
         code === 'auth/cancelled-popup-request'
       )
         await signInWithRedirect(auth, provider);
-      else
-        setAuthError('Não foi possível entrar com Google. Tente novamente.');
+      else setAuthError('Não foi possível entrar com Google. Tente novamente.');
     }
   };
 
@@ -1501,17 +1199,44 @@ export default function Home() {
             setEditingBundle(null);
           }}
         >
-          <span className="brand-mark"><GraduationCap /></span>
-          <span><small>CORREÇÃO INTELIGENTE · V2.0</small><strong>Corrige Fácil</strong></span>
+          <span className="brand-mark">
+            <GraduationCap />
+          </span>
+          <span>
+            <small>CORREÇÃO INTELIGENTE · V2.0</small>
+            <strong>Corrige Fácil</strong>
+          </span>
         </button>
         <nav>
-          <button onClick={() => { setView('sessions'); setBundle(null); }}><LayoutDashboard /> Minhas sessões</button>
-          <button onClick={() => { setEditingBundle(null); setView('create'); }}><Plus /> Nova sessão</button>
+          <button
+            onClick={() => {
+              setView('sessions');
+              setBundle(null);
+            }}
+          >
+            <LayoutDashboard /> Minhas sessões
+          </button>
+          <button
+            onClick={() => {
+              setEditingBundle(null);
+              setView('create');
+            }}
+          >
+            <Plus /> Nova sessão
+          </button>
         </nav>
         <div className="user-menu">
-          <span><UserRound /> {user.displayName || user.email || 'Professor'}</span>
+          <span>
+            <UserRound /> {user.displayName || user.email || 'Professor'}
+          </span>
           {firebaseConfigured ? (
-            <Button size="sm" variant="ghost" onClick={() => auth && signOut(auth)}><LogOut /> Sair</Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => auth && signOut(auth)}
+            >
+              <LogOut /> Sair
+            </Button>
           ) : (
             <span className="local-pill">Modo local</span>
           )}

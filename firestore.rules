@@ -2,61 +2,103 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedInWithEmail() {
-      return request.auth != null
-        && request.auth.token.email is string
-        && request.auth.token.email_verified == true;
+      return request.auth != null && request.auth.token.email is string && request.auth.token.email_verified == true;
     }
-
-    function normalizedEmail() {
-      return request.auth.token.email.lower();
-    }
-
+    function normalizedEmail() { return request.auth.token.email.lower(); }
     function hasPlatformAccess() {
       return signedInWithEmail()
         && exists(/databases/$(database)/documents/authorizedUsers/$(normalizedEmail()))
         && get(/databases/$(database)/documents/authorizedUsers/$(normalizedEmail())).data.enabled == true;
     }
-
-    function owns(uid) {
-      return hasPlatformAccess() && request.auth.uid == uid;
+    function owns(uid) { return hasPlatformAccess() && request.auth.uid == uid; }
+    function unit(v) { return v is number && v >= 0 && v <= 1; }
+    function validTemplate(d) {
+      return d.keys().hasAll(['name','version','mode','questionCount','geometry','baseline','createdAt'])
+        && d.keys().hasOnly(['name','version','mode','questionCount','geometry','baseline','createdAt'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 100
+        && d.version is int && d.version >= 1 && d.version <= 2 && d.mode in ['legacy','standard']
+        && d.questionCount is int && d.questionCount >= 1 && d.questionCount <= 50 && d.createdAt is timestamp
+        && d.geometry is map && d.geometry.keys().hasAll(['columns','rows','radiusRatio'])
+        && d.geometry.keys().hasOnly(['columns','rows','radiusRatio'])
+        && d.geometry.columns == 5 && d.geometry.rows == d.questionCount
+        && d.geometry.radiusRatio is number && d.geometry.radiusRatio >= 0.005 && d.geometry.radiusRatio <= 0.2
+        && d.baseline is map && d.baseline.keys().hasAll(['A','B','C','D','E'])
+        && d.baseline.keys().hasOnly(['A','B','C','D','E'])
+        && unit(d.baseline.A) && unit(d.baseline.B) && unit(d.baseline.C) && unit(d.baseline.D) && unit(d.baseline.E);
     }
-
+    function compatibleTemplate(uid, d) {
+      let id = d.get('answerSheetTemplateId', null);
+      return id == null || id in ['builtin:legacy','builtin:standard-v2']
+        || (id is string && exists(/databases/$(database)/documents/users/$(uid)/answerSheetTemplates/$(id))
+          && get(/databases/$(database)/documents/users/$(uid)/answerSheetTemplates/$(id)).data.questionCount == d.questionCount);
+    }
+    function validSession(uid, d) {
+      return d.keys().hasOnly(['title','className','subject','questionCount','pointsPerQuestion','answerKey','status','lockedAt','createdAt','updatedAt','answerSheetTemplateId'])
+        && d.title is string && d.title.size() <= 200 && d.className is string && d.className.size() <= 200
+        && d.subject is string && d.subject.size() <= 200
+        && d.questionCount is int && d.questionCount >= 1 && d.questionCount <= 50
+        && d.pointsPerQuestion is number && d.pointsPerQuestion > 0 && d.pointsPerQuestion <= 10000
+        && d.answerKey is list && d.answerKey.size() == d.questionCount && d.answerKey.hasOnly(['A','B','C','D','E'])
+        && d.status in ['draft','active','archived'] && (d.lockedAt == null || d.lockedAt is timestamp)
+        && d.createdAt is timestamp && d.updatedAt is timestamp && compatibleTemplate(uid, d);
+    }
+    // Each validation block is <=10 readings to respect the Firestore
+    // 1,000-expression limit. The public correction keeps the original arrays.
+    function validReading(r, answer) {
+      return r.keys().hasOnly(['answer','confidence','source','status'])
+        && r.answer == answer && r.confidence is number && r.confidence >= 80 && r.confidence <= 100
+        && r.source in ['scan','manual']
+        && (r.status == (answer == null ? 'blank' : 'read')
+          || (r.source == 'manual' && answer == null && r.status == 'multiple'));
+    }
+    function finalReadings(d) {
+      return d.keys().hasOnly(['answers','readings'])
+        && d.answers is list && d.answers.size() >= 1 && d.answers.size() <= 10
+        && d.answers.hasOnly(['A','B','C','D','E',null])
+        && d.readings is list && d.readings.size() == d.answers.size()
+        && (d.readings.size() <= 0 || validReading(d.readings[0], d.answers[0]))
+        && (d.readings.size() <= 1 || validReading(d.readings[1], d.answers[1]))
+        && (d.readings.size() <= 2 || validReading(d.readings[2], d.answers[2]))
+        && (d.readings.size() <= 3 || validReading(d.readings[3], d.answers[3]))
+        && (d.readings.size() <= 4 || validReading(d.readings[4], d.answers[4]))
+        && (d.readings.size() <= 5 || validReading(d.readings[5], d.answers[5]))
+        && (d.readings.size() <= 6 || validReading(d.readings[6], d.answers[6]))
+        && (d.readings.size() <= 7 || validReading(d.readings[7], d.answers[7]))
+        && (d.readings.size() <= 8 || validReading(d.readings[8], d.answers[8]))
+        && (d.readings.size() <= 9 || validReading(d.readings[9], d.answers[9]));
+    }
+    function chunk(uid, sessionId, correctionId, id, enabled) {
+      return enabled ? getAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)/corrections/$(correctionId)/readingChecks/$(id)).data
+        : {'answers': [], 'readings': []};
+    }
+    function checkedArrays(uid, sessionId, correctionId, d) {
+      let a = chunk(uid, sessionId, correctionId, '0', true);
+      let b = chunk(uid, sessionId, correctionId, '1', d.answers.size() > 10);
+      let c = chunk(uid, sessionId, correctionId, '2', d.answers.size() > 20);
+      let e = chunk(uid, sessionId, correctionId, '3', d.answers.size() > 30);
+      let f = chunk(uid, sessionId, correctionId, '4', d.answers.size() > 40);
+      return d.answers == a.answers.concat(b.answers).concat(c.answers).concat(e.answers).concat(f.answers)
+        && d.readings == a.readings.concat(b.readings).concat(c.readings).concat(e.readings).concat(f.readings);
+    }
     match /authorizedUsers/{email} {
       allow get: if signedInWithEmail() && normalizedEmail() == email;
       allow list, create, update, delete: if false;
     }
-
     match /users/{uid} {
       allow read: if owns(uid);
-      allow create, update: if owns(uid)
-        && request.resource.data.keys().hasOnly([
-          'displayName', 'email', 'updatedAt'
-        ]);
+      allow create, update: if owns(uid) && request.resource.data.keys().hasOnly(['displayName','email','updatedAt']);
       allow delete: if false;
-
+      match /answerSheetTemplates/{templateId} {
+        allow read: if owns(uid);
+        allow create: if owns(uid) && validTemplate(request.resource.data);
+        // Immutable versions protect previously printed sheets.
+        allow update, delete: if false;
+      }
       match /sessions/{sessionId} {
         allow read, delete: if owns(uid);
-        allow create: if owns(uid)
-          && request.resource.data.keys().hasOnly([
-            'title', 'className', 'subject', 'questionCount',
-            'pointsPerQuestion', 'answerKey', 'status', 'lockedAt',
-            'createdAt', 'updatedAt'
-          ])
-          && request.resource.data.questionCount is int
-          && request.resource.data.questionCount >= 1
-          && request.resource.data.questionCount <= 50
-          && request.resource.data.answerKey is list
-          && request.resource.data.answerKey.size() == request.resource.data.questionCount;
-        allow update: if owns(uid)
-          && request.resource.data.keys().hasOnly([
-            'title', 'className', 'subject', 'questionCount',
-            'pointsPerQuestion', 'answerKey', 'status', 'lockedAt',
-            'createdAt', 'updatedAt'
-          ])
-          && (resource.data.lockedAt == null
-            || request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['status', 'updatedAt']));
-
+        allow create: if owns(uid) && validSession(uid, request.resource.data) && request.resource.data.lockedAt == null;
+        allow update: if owns(uid) && validSession(uid, request.resource.data)
+          && (resource.data.lockedAt == null || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt','answerSheetTemplateId']));
         match /questions/{questionId} {
           allow read: if owns(uid);
           allow delete: if owns(uid)
@@ -64,29 +106,33 @@ service cloud.firestore {
               || get(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)).data.lockedAt == null);
           allow create, update: if owns(uid)
             && getAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)).data.lockedAt == null
-            && request.resource.data.keys().hasOnly([
-              'id', 'order', 'prompt', 'options', 'ocrConfidence'
-            ])
-            && request.resource.data.prompt is string
-            && request.resource.data.prompt.size() <= 10000
-            && request.resource.data.options is map
-            && request.resource.data.options.keys().hasOnly([
-              'A', 'B', 'C', 'D', 'E'
-            ]);
+            && request.resource.data.keys().hasOnly(['id','order','prompt','options','ocrConfidence'])
+            && request.resource.data.prompt is string && request.resource.data.prompt.size() <= 10000
+            && request.resource.data.options is map && request.resource.data.options.keys().hasOnly(['A','B','C','D','E']);
         }
-
         match /corrections/{correctionId} {
           allow read, delete: if owns(uid);
           allow create: if owns(uid)
-            && request.resource.data.keys().hasOnly([
-              'studentLabel', 'answers', 'readings', 'correctCount',
-              'score', 'maximumScore', 'createdAt'
-            ])
+            && request.resource.data.keys().hasOnly(['studentLabel','answers','readings','correctCount','score','maximumScore','createdAt'])
+            && (request.resource.data.studentLabel == null || (request.resource.data.studentLabel is string && request.resource.data.studentLabel.size() <= 120))
             && request.resource.data.answers is list
-            && request.resource.data.readings is list
-            && request.resource.data.answers.size() <= 50
-            && request.resource.data.readings.size() <= 50;
+            && request.resource.data.answers.size() == getAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)).data.questionCount
+            && request.resource.data.answers.hasOnly(['A','B','C','D','E',null])
+            && request.resource.data.correctCount is int && request.resource.data.correctCount >= 0
+            && request.resource.data.correctCount <= request.resource.data.answers.size()
+            && request.resource.data.maximumScore == getAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)).data.questionCount * getAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)).data.pointsPerQuestion
+            && request.resource.data.score == request.resource.data.correctCount * getAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)).data.pointsPerQuestion
+            && getAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)).data.lockedAt is timestamp
+            && request.resource.data.createdAt is timestamp && checkedArrays(uid, sessionId, correctionId, request.resource.data);
           allow update: if false;
+          match /readingChecks/{checkId} {
+            allow read, delete: if owns(uid);
+            allow create: if owns(uid) && checkId in ['0','1','2','3','4']
+              && !exists(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)/corrections/$(correctionId))
+              && existsAfter(/databases/$(database)/documents/users/$(uid)/sessions/$(sessionId)/corrections/$(correctionId))
+              && finalReadings(request.resource.data);
+            allow update: if false;
+          }
         }
       }
     }

@@ -1,7 +1,5 @@
 import {
-  addDoc,
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -15,12 +13,14 @@ import {
 
 import { ACCESS_COLLECTION, normalizeAccessEmail } from './access';
 import { db, firebaseConfigured } from './firebase';
+import { assertFinalReadings } from './sheet-geometry';
 import type {
   Correction,
   ExamSession,
   QuestionDefinition,
   SessionBundle,
   SessionDraft,
+  AnswerSheetTemplate,
 } from './types';
 
 const LOCAL_KEY = 'corrige-facil-sessions-v2';
@@ -38,7 +38,9 @@ function makeId(prefix: string) {
 function readLocal(): LocalDatabase {
   if (typeof window === 'undefined') return {};
   try {
-    return JSON.parse(window.localStorage.getItem(LOCAL_KEY) ?? '{}') as LocalDatabase;
+    return JSON.parse(
+      window.localStorage.getItem(LOCAL_KEY) ?? '{}',
+    ) as LocalDatabase;
   } catch {
     return {};
   }
@@ -59,7 +61,10 @@ function textValue(value: unknown, fallback = '') {
   return typeof value === 'string' ? value : fallback;
 }
 
-function sessionFromDoc(id: string, data: Record<string, unknown>): ExamSession {
+function sessionFromDoc(
+  id: string,
+  data: Record<string, unknown>,
+): ExamSession {
   return {
     id,
     title: textValue(data.title, 'Sessão sem título'),
@@ -72,6 +77,10 @@ function sessionFromDoc(id: string, data: Record<string, unknown>): ExamSession 
     lockedAt: data.lockedAt ? normalizeDate(data.lockedAt) : null,
     createdAt: normalizeDate(data.createdAt),
     updatedAt: normalizeDate(data.updatedAt),
+    answerSheetTemplateId:
+      typeof data.answerSheetTemplateId === 'string'
+        ? data.answerSheetTemplateId
+        : null,
   };
 }
 
@@ -91,9 +100,7 @@ export async function hasPlatformAccess(email: string | null) {
   if (!firebaseConfigured || !db) return true;
   const normalizedEmail = normalizeAccessEmail(email);
   if (!normalizedEmail) return false;
-  const access = await getDoc(
-    doc(db, ACCESS_COLLECTION, normalizedEmail),
-  );
+  const access = await getDoc(doc(db, ACCESS_COLLECTION, normalizedEmail));
   return access.exists() && access.data().enabled === true;
 }
 
@@ -182,12 +189,18 @@ export async function updateSessionDraft(
     );
     if (!bundle) throw new Error('Sessão não encontrada.');
     if (bundle.session.lockedAt || bundle.corrections.length)
-      throw new Error('Esta sessão já está travada para alterações estruturais.');
+      throw new Error(
+        'Esta sessão já está travada para alterações estruturais.',
+      );
     bundle.session = {
       ...bundle.session,
       ...draft,
       status: 'draft',
       updatedAt: timestamp,
+      answerSheetTemplateId:
+        bundle.session.questionCount === draft.questionCount
+          ? (bundle.session.answerSheetTemplateId ?? null)
+          : null,
     };
     bundle.questions = draft.questions;
     writeLocal(database);
@@ -212,6 +225,10 @@ export async function updateSessionDraft(
     answerKey: draft.answerKey,
     status: 'draft',
     updatedAt: serverTimestamp(),
+    answerSheetTemplateId:
+      sessionSnapshot.data().questionCount === draft.questionCount
+        ? (sessionSnapshot.data().answerSheetTemplateId ?? null)
+        : null,
   });
   existingQuestions.forEach((item) => batch.delete(item.ref));
   for (const question of draft.questions)
@@ -225,6 +242,10 @@ export async function updateSessionDraft(
       lockedAt: null,
       createdAt: normalizeDate(sessionSnapshot.data().createdAt),
       updatedAt: timestamp,
+      answerSheetTemplateId:
+        sessionSnapshot.data().questionCount === draft.questionCount
+          ? (sessionSnapshot.data().answerSheetTemplateId ?? null)
+          : null,
     },
     questions: draft.questions,
     corrections: [],
@@ -248,7 +269,10 @@ export async function loadSession(
       getDoc(sessionRef),
       getDocs(query(collection(sessionRef, 'questions'), orderBy('order'))),
       getDocs(
-        query(collection(sessionRef, 'corrections'), orderBy('createdAt', 'desc')),
+        query(
+          collection(sessionRef, 'corrections'),
+          orderBy('createdAt', 'desc'),
+        ),
       ),
     ]);
   if (!sessionSnapshot.exists()) return null;
@@ -270,6 +294,26 @@ export async function saveCorrection(
   sessionId: string,
   correction: Omit<Correction, 'id' | 'createdAt'>,
 ) {
+  correction = {
+    studentLabel: correction.studentLabel,
+    answers: [...correction.answers],
+    correctCount: correction.correctCount,
+    score: correction.score,
+    maximumScore: correction.maximumScore,
+    readings: correction.readings.map((reading) => ({
+      answer: reading.answer,
+      confidence: reading.confidence,
+      source: reading.source,
+      status: reading.status ?? (reading.answer ? 'read' : 'blank'),
+    })),
+  };
+  assertFinalReadings(correction.readings, correction.answers.length);
+  if (
+    correction.answers.some(
+      (answer, index) => answer !== correction.readings[index].answer,
+    )
+  )
+    throw new Error('As respostas e a revisão precisam coincidir.');
   const timestamp = now();
   if (!firebaseConfigured || !db) {
     const database = readLocal();
@@ -277,6 +321,7 @@ export async function saveCorrection(
       (item) => item.session.id === sessionId,
     );
     if (!bundle) throw new Error('Sessão não encontrada.');
+    assertFinalReadings(correction.readings, bundle.session.questionCount);
     const saved: Correction = {
       ...correction,
       id: makeId('correction'),
@@ -290,16 +335,30 @@ export async function saveCorrection(
     return saved;
   }
   const sessionRef = doc(db, 'users', uid, 'sessions', sessionId);
-  const correctionRef = await addDoc(collection(sessionRef, 'corrections'), {
+  const sessionSnapshot = await getDoc(sessionRef);
+  if (!sessionSnapshot.exists()) throw new Error('Sessão não encontrada.');
+  assertFinalReadings(
+    correction.readings,
+    sessionSnapshot.data().questionCount,
+  );
+  const correctionRef = doc(collection(sessionRef, 'corrections'));
+  const batch = writeBatch(db);
+  batch.set(correctionRef, {
     ...correction,
     createdAt: serverTimestamp(),
   });
-  const sessionSnapshot = await getDoc(sessionRef);
-  await updateDoc(sessionRef, {
+  for (let offset = 0; offset < correction.readings.length; offset += 10) {
+    batch.set(doc(correctionRef, 'readingChecks', String(offset / 10)), {
+      answers: correction.answers.slice(offset, offset + 10),
+      readings: correction.readings.slice(offset, offset + 10),
+    });
+  }
+  batch.update(sessionRef, {
     status: 'active',
     lockedAt: sessionSnapshot.data()?.lockedAt ?? serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  await batch.commit();
   return { ...correction, id: correctionRef.id, createdAt: timestamp };
 }
 
@@ -320,17 +379,20 @@ export async function deleteCorrection(
     writeLocal(database);
     return;
   }
-  await deleteDoc(
-    doc(
-      db,
-      'users',
-      uid,
-      'sessions',
-      sessionId,
-      'corrections',
-      correctionId,
-    ),
+  const correctionRef = doc(
+    db,
+    'users',
+    uid,
+    'sessions',
+    sessionId,
+    'corrections',
+    correctionId,
   );
+  const checks = await getDocs(collection(correctionRef, 'readingChecks'));
+  const batch = writeBatch(db);
+  checks.forEach((item) => batch.delete(item.ref));
+  batch.delete(correctionRef);
+  await batch.commit();
 }
 
 export async function setSessionStatus(
@@ -370,15 +432,26 @@ export async function deleteSession(uid: string, sessionId: string) {
     getDocs(collection(sessionRef, 'questions')),
     getDocs(collection(sessionRef, 'corrections')),
   ]);
+  const correctionRefs = [];
+  for (const item of corrections.docs) {
+    const checks = await getDocs(collection(item.ref, 'readingChecks'));
+    correctionRefs.push(...checks.docs.map((check) => check.ref), item.ref);
+  }
+  for (let offset = 0; offset < correctionRefs.length; offset += 400) {
+    const cleanup = writeBatch(db);
+    correctionRefs
+      .slice(offset, offset + 400)
+      .forEach((ref) => cleanup.delete(ref));
+    await cleanup.commit();
+  }
   const batch = writeBatch(db);
   questions.forEach((item) => batch.delete(item.ref));
-  corrections.forEach((item) => batch.delete(item.ref));
   batch.delete(sessionRef);
   await batch.commit();
 }
 
 export async function duplicateSession(uid: string, source: SessionBundle) {
-  return createSession(uid, {
+  const bundle = await createSession(uid, {
     title: `${source.session.title} — cópia`,
     className: source.session.className,
     subject: source.session.subject,
@@ -391,4 +464,131 @@ export async function duplicateSession(uid: string, source: SessionBundle) {
       order: index + 1,
     })),
   });
+  if (source.session.answerSheetTemplateId) {
+    await associateAnswerSheetTemplate(
+      uid,
+      bundle.session.id,
+      source.session.answerSheetTemplateId,
+    );
+    bundle.session.answerSheetTemplateId = source.session.answerSheetTemplateId;
+  }
+  return bundle;
+}
+
+const TEMPLATE_KEY = 'corrige-facil-templates-v1';
+function localTemplates(): Record<string, AnswerSheetTemplate[]> {
+  try {
+    return JSON.parse(window.localStorage.getItem(TEMPLATE_KEY) ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+export function validateAnswerSheetTemplate(
+  template: Omit<AnswerSheetTemplate, 'id' | 'createdAt'>,
+) {
+  const fields = [
+    'name',
+    'version',
+    'mode',
+    'questionCount',
+    'geometry',
+    'baseline',
+  ];
+  if (
+    Object.keys(template).some((key) => !fields.includes(key)) ||
+    !template.name.trim() ||
+    template.name.length > 100 ||
+    !Number.isInteger(template.version) ||
+    template.version < 1 ||
+    template.version > 2 ||
+    !['legacy', 'standard'].includes(template.mode) ||
+    !Number.isInteger(template.questionCount) ||
+    template.questionCount < 1 ||
+    template.questionCount > 50 ||
+    Object.keys(template.geometry).sort().join(',') !==
+      'columns,radiusRatio,rows' ||
+    template.geometry.columns !== 5 ||
+    template.geometry.rows !== template.questionCount ||
+    !Number.isFinite(template.geometry.radiusRatio) ||
+    template.geometry.radiusRatio < 0.005 ||
+    template.geometry.radiusRatio > 0.2 ||
+    Object.keys(template.baseline).sort().join(',') !== 'A,B,C,D,E' ||
+    Object.values(template.baseline).some(
+      (value) => !Number.isFinite(value) || value < 0 || value > 1,
+    )
+  )
+    throw new Error('O modelo contém campos ou medidas inválidas.');
+}
+
+export async function listAnswerSheetTemplates(
+  uid: string,
+): Promise<AnswerSheetTemplate[]> {
+  if (!firebaseConfigured || !db) return localTemplates()[uid] ?? [];
+  const snapshot = await getDocs(
+    collection(db, 'users', uid, 'answerSheetTemplates'),
+  );
+  return snapshot.docs.map(
+    (item) =>
+      ({
+        id: item.id,
+        ...item.data(),
+        createdAt: normalizeDate(item.data().createdAt),
+      }) as AnswerSheetTemplate,
+  );
+}
+
+export async function saveAnswerSheetTemplate(
+  uid: string,
+  template: Omit<AnswerSheetTemplate, 'id' | 'createdAt'>,
+) {
+  validateAnswerSheetTemplate(template);
+  const saved = { ...template, id: makeId('sheet'), createdAt: now() };
+  if (!firebaseConfigured || !db) {
+    const database = localTemplates();
+    database[uid] = [saved, ...(database[uid] ?? [])];
+    window.localStorage.setItem(TEMPLATE_KEY, JSON.stringify(database));
+  } else
+    await setDoc(doc(db, 'users', uid, 'answerSheetTemplates', saved.id), {
+      ...template,
+      createdAt: serverTimestamp(),
+    });
+  return saved;
+}
+
+export async function associateAnswerSheetTemplate(
+  uid: string,
+  sessionId: string,
+  templateId: string | null,
+) {
+  const bundle = await loadSession(uid, sessionId);
+  if (!bundle) throw new Error('Sessão não encontrada.');
+  if (
+    templateId &&
+    !['builtin:legacy', 'builtin:standard-v2'].includes(templateId)
+  ) {
+    const templates = await listAnswerSheetTemplates(uid);
+    if (
+      !templates.some(
+        (template) =>
+          template.id === templateId &&
+          template.questionCount === bundle.session.questionCount,
+      )
+    )
+      throw new Error(
+        'O modelo deve pertencer a você e ter a mesma quantidade de questões.',
+      );
+  }
+  if (!firebaseConfigured || !db) {
+    const database = readLocal();
+    const target = database[uid]?.find((item) => item.session.id === sessionId);
+    if (target) {
+      target.session.answerSheetTemplateId = templateId;
+      writeLocal(database);
+    }
+  } else
+    await updateDoc(doc(db, 'users', uid, 'sessions', sessionId), {
+      answerSheetTemplateId: templateId,
+      updatedAt: serverTimestamp(),
+    });
 }

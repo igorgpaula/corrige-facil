@@ -7,6 +7,28 @@ export type AnswerReading = {
   answer: Letter | null;
   confidence: number;
   source: 'scan' | 'manual';
+  status?: 'read' | 'blank' | 'multiple' | 'uncertain';
+  suggestedAnswer?: Letter | null;
+};
+
+export type SheetPoint = { x: number; y: number };
+export type SheetAnchors = [SheetPoint, SheetPoint, SheetPoint, SheetPoint];
+export type SheetMode = 'legacy' | 'standard';
+export type AnswerSheetTemplate = {
+  id: string;
+  name: string;
+  version: number;
+  mode: SheetMode;
+  questionCount: number;
+  geometry: { columns: number; rows: number; radiusRatio: number };
+  baseline: Record<Letter, number>;
+  createdAt: string;
+};
+export type ScanOptions = {
+  mode: SheetMode;
+  anchors?: SheetAnchors;
+  template?: AnswerSheetTemplate | null;
+  calibrate?: boolean;
 };
 
 export type QuestionDefinition = {
@@ -31,6 +53,7 @@ export type ExamSession = {
   lockedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  answerSheetTemplateId?: string | null;
 };
 
 export type Correction = {
@@ -64,4 +87,16 @@ export type ScanResult = {
   readings: AnswerReading[];
   preview: string;
   mode: 'markers' | 'free';
+  imageSize: { width: number; height: number };
+  alignment: 'verified' | 'needs-adjustment' | 'failed';
+  anchors: SheetAnchors | null;
+  overlay: Array<{ question: number; centers: SheetPoint[]; radius: number }>;
+  diagnostics: {
+    engine: string;
+    geometry: number;
+    matched: number;
+    residual: number;
+    message: string;
+  };
+  calibration?: { radiusRatio: number; baseline: Record<Letter, number> };
 };

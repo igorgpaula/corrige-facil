@@ -35,7 +35,28 @@ jobs:
       - name: Instalar dependências da v2.0
         run: pnpm install --frozen-lockfile
 
+      - name: Preparar Java para validar as regras do Firestore
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Iniciar emulador Firestore local, sem credenciais
+        run: |
+          mkdir -p work/emulator
+          curl --fail --silent --show-error --location https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar --output work/emulator/firestore.jar
+          echo '9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c  work/emulator/firestore.jar' | sha256sum --check
+          java -Duser.language=en -Duser.country=US -jar work/emulator/firestore.jar --host=127.0.0.1 --port=8788 --project_id=demo-corrige --rules=firestore.rules > work/emulator/firestore.log 2>&1 &
+          for attempt in $(seq 1 40); do
+            if curl --silent http://127.0.0.1:8788/ > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat work/emulator/firestore.log
+          exit 1
+
       - name: Validar testes e tipos da v2.0
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8788
         run: |
           pnpm test
           pnpm exec tsc --noEmit
