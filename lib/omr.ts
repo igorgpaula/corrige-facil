@@ -50,6 +50,57 @@ function pixelDarkness(pixels: Uint8ClampedArray, offset: number) {
   return Math.max(0, (185 - gray) / 185);
 }
 
+function normalizeSheetLighting(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+) {
+  const gray = new Uint8Array(width * height);
+  const stride = width + 1;
+  const integral = new Float64Array(stride * (height + 1));
+  for (let y = 0; y < height; y += 1) {
+    let rowSum = 0;
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      const offset = index * 4;
+      gray[index] =
+        pixels[offset] * 0.299 +
+        pixels[offset + 1] * 0.587 +
+        pixels[offset + 2] * 0.114;
+      rowSum += gray[index];
+      integral[(y + 1) * stride + x + 1] =
+        integral[y * stride + x + 1] + rowSum;
+    }
+  }
+  const normalized = new Uint8ClampedArray(pixels.length);
+  const radius = Math.max(12, Math.round(width * 0.065));
+  for (let y = 0; y < height; y += 1) {
+    const top = Math.max(0, y - radius);
+    const bottom = Math.min(height, y + radius + 1);
+    for (let x = 0; x < width; x += 1) {
+      const left = Math.max(0, x - radius);
+      const right = Math.min(width, x + radius + 1);
+      const background =
+        (integral[bottom * stride + right] -
+          integral[top * stride + right] -
+          integral[bottom * stride + left] +
+          integral[top * stride + left]) /
+        ((bottom - top) * (right - left));
+      const value =
+        255 -
+        (Math.max(0, background - gray[y * width + x] - 5) * 255) /
+          Math.max(40, background - 30);
+      const offset = (y * width + x) * 4;
+      normalized[offset] =
+        normalized[offset + 1] =
+        normalized[offset + 2] =
+          value;
+      normalized[offset + 3] = 255;
+    }
+  }
+  return normalized;
+}
+
 function smoothSignal(signal: Float32Array, windowSize: number) {
   const smoothed = new Float32Array(signal.length);
   const prefix = new Float64Array(signal.length + 1);
@@ -97,16 +148,16 @@ function circleSignature(
   radius: number,
 ) {
   const r = Math.max(3, radius);
-  const patch = Math.max(1.5, r * 0.22);
+  const patch = Math.max(1.5, r * 0.18);
   const directions = [
-    [0, -r * 0.72],
-    [0, r * 0.72],
-    [-r * 0.72, 0],
-    [r * 0.72, 0],
-    [-r * 0.5, -r * 0.5],
-    [r * 0.5, -r * 0.5],
-    [-r * 0.5, r * 0.5],
-    [r * 0.5, r * 0.5],
+    [0, -r * 0.88],
+    [0, r * 0.88],
+    [-r * 0.88, 0],
+    [r * 0.88, 0],
+    [-r * 0.62, -r * 0.62],
+    [r * 0.62, -r * 0.62],
+    [-r * 0.62, r * 0.62],
+    [r * 0.62, r * 0.62],
   ];
   const values = directions.map(([dx, dy]) =>
     averagePatch(
@@ -117,7 +168,12 @@ function circleSignature(
       patch,
     ),
   );
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  // Require ink around most of the contour, not just one dark horizontal stroke.
+  const weakest = values
+    .slice()
+    .sort((a, b) => a - b)
+    .slice(0, 6);
+  const mean = weakest.reduce((sum, value) => sum + value, 0) / weakest.length;
   const minimumAxis = Math.min(values[0], values[1], values[2], values[3]);
   return mean * 0.55 + minimumAxis * 0.45;
 }
@@ -206,22 +262,93 @@ function findRegistrationPoint(
   height: number,
   area: { x0: number; x1: number; y0: number; y1: number },
 ) {
-  const step = Math.max(2, Math.round(Math.min(width, height) / 350));
-  let totalX = 0;
-  let totalY = 0;
-  let weight = 0;
-  for (let y = Math.floor(area.y0 * height); y < area.y1 * height; y += step) {
-    for (let x = Math.floor(area.x0 * width); x < area.x1 * width; x += step) {
-      const darkness = pixelDarkness(pixels, (y * width + x) * 4);
-      if (darkness > 0.25) {
-        const strong = darkness * darkness;
-        totalX += x * strong;
-        totalY += y * strong;
-        weight += strong;
+  const x0 = Math.floor(area.x0 * width);
+  const y0 = Math.floor(area.y0 * height);
+  const regionWidth = Math.ceil(area.x1 * width) - x0;
+  const regionHeight = Math.ceil(area.y1 * height) - y0;
+  const seen = new Uint8Array(regionWidth * regionHeight);
+  const queue = new Int32Array(seen.length);
+  const ink = (index: number) =>
+    pixelDarkness(
+      pixels,
+      ((y0 + Math.floor(index / regionWidth)) * width +
+        x0 +
+        (index % regionWidth)) *
+        4,
+    ) > 0.58;
+  let best: { point: Point; area: number } | null = null;
+  for (let start = 0; start < seen.length; start += 1) {
+    if (seen[start]) continue;
+    seen[start] = 1;
+    if (!ink(start)) continue;
+    let head = 0;
+    let tail = 1;
+    let minX = regionWidth;
+    let maxX = 0;
+    let minY = regionHeight;
+    let maxY = 0;
+    let sumX = 0;
+    let sumY = 0;
+    queue[0] = start;
+    while (head < tail) {
+      const index = queue[head++];
+      const x = index % regionWidth;
+      const y = Math.floor(index / regionWidth);
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+      sumX += x;
+      sumY += y;
+      const neighbors = [
+        x > 0 ? index - 1 : -1,
+        x + 1 < regionWidth ? index + 1 : -1,
+        y > 0 ? index - regionWidth : -1,
+        y + 1 < regionHeight ? index + regionWidth : -1,
+      ];
+      for (const next of neighbors) {
+        if (next < 0 || seen[next]) continue;
+        seen[next] = 1;
+        if (ink(next)) queue[tail++] = next;
       }
     }
+    const boxWidth = maxX - minX + 1;
+    const boxHeight = maxY - minY + 1;
+    const aspect = boxWidth / boxHeight;
+    const fill = tail / (boxWidth * boxHeight);
+    if (
+      boxWidth < width * 0.018 ||
+      boxWidth > width * 0.11 ||
+      aspect < 0.65 ||
+      aspect > 1.5 ||
+      fill < 0.72
+    )
+      continue;
+    const cornerSize = Math.max(
+      2,
+      Math.floor(Math.min(boxWidth, boxHeight) * 0.2),
+    );
+    const corners = [
+      [minX, minY],
+      [maxX - cornerSize + 1, minY],
+      [minX, maxY - cornerSize + 1],
+      [maxX - cornerSize + 1, maxY - cornerSize + 1],
+    ];
+    const squareCorners = corners.every(([cornerX, cornerY]) => {
+      let count = 0;
+      for (let dy = 0; dy < cornerSize; dy += 1)
+        for (let dx = 0; dx < cornerSize; dx += 1)
+          if (ink((cornerY + dy) * regionWidth + cornerX + dx)) count += 1;
+      return count / (cornerSize * cornerSize) >= 0.2;
+    });
+    if (!squareCorners) continue;
+    if (!best || tail > best.area)
+      best = {
+        point: { x: x0 + sumX / tail, y: y0 + sumY / tail },
+        area: tail,
+      };
   }
-  return weight ? { x: totalX / weight, y: totalY / weight } : null;
+  return best?.point ?? null;
 }
 
 function detectRows(
@@ -229,11 +356,40 @@ function detectRows(
   width: number,
   height: number,
   questionCount: number,
+  grid?: { start: number; step: number },
 ) {
   const signal = new Float32Array(height);
+  const horizontalOffsets = new Float32Array(height);
   const xFrom = Math.round(width * 0.16);
   const xTo = Math.round(width * 0.94);
   for (let y = 0; y < height; y += 1) {
+    if (grid) {
+      let bestScore = 0;
+      for (const offset of [-grid.step * 0.12, 0, grid.step * 0.12]) {
+        let score = 0;
+        for (let column = 0; column < 5; column += 1) {
+          score += circleSignature(
+            pixels,
+            width,
+            height,
+            { x: grid.start + column * grid.step + offset, y },
+            grid.step * 0.36,
+          );
+        }
+        score /= 5;
+        if (score > bestScore) {
+          bestScore = score;
+          horizontalOffsets[y] = offset;
+        }
+      }
+      signal[y] = bestScore;
+      if (y + 1 < height) {
+        signal[y + 1] = bestScore;
+        horizontalOffsets[y + 1] = horizontalOffsets[y];
+        y += 1;
+      }
+      continue;
+    }
     let total = 0;
     for (let x = xFrom; x < xTo; x += 1)
       total += pixelDarkness(pixels, (y * width + x) * 4);
@@ -252,7 +408,11 @@ function detectRows(
       Math.round(height * 0.4),
       height - 1 - step * (questionCount - 1),
     );
-    for (let start = Math.round(height * 0.025); start <= lastStart; start += 1) {
+    for (
+      let start = Math.round(height * 0.025);
+      start <= lastStart;
+      start += 1
+    ) {
       const rows: number[] = [];
       let score = 0;
       const radius = Math.max(2, Math.round(step * 0.14));
@@ -278,8 +438,10 @@ function detectRows(
     }
   }
   if (!best || best.score < 0.016)
-    throw new Error('Não encontrei uma sequência regular de questões nesta foto.');
-  return best;
+    throw new Error(
+      'Não encontrei uma sequência regular de questões nesta foto.',
+    );
+  return { ...best, offsets: best.rows.map((y) => horizontalOffsets[y]) };
 }
 
 function readFreeGrid(
@@ -314,14 +476,22 @@ function readFreeGrid(
     columnSignal,
     Math.max(3, Math.round(width * 0.012)),
   );
-  const projectedCandidates: Array<Omit<ColumnGridCandidate, 'circleScore'>> = [];
+  const projectedCandidates: Array<Omit<ColumnGridCandidate, 'circleScore'>> =
+    [];
   for (let step = Math.round(width * 0.05); step <= width * 0.18; step += 1) {
     const latestStart = Math.min(
       Math.round(width * 0.56),
       width - 1 - step * 4,
     );
-    for (let start = Math.round(width * 0.16); start <= latestStart; start += 1) {
-      const columns = Array.from({ length: 5 }, (_, index) => start + index * step);
+    for (
+      let start = Math.round(width * 0.16);
+      start <= latestStart;
+      start += 1
+    ) {
+      const columns = Array.from(
+        { length: 5 },
+        (_, index) => start + index * step,
+      );
       const inkScore =
         columns.reduce((sum, column) => sum + smoothColumns[column], 0) / 5;
       if (inkScore < 0.018) continue;
@@ -346,29 +516,32 @@ function readFreeGrid(
     .sort((a, b) => b.inkScore - a.inkScore)
     .slice(0, 600);
   const candidates: ColumnGridCandidate[] = finalists.map((candidate) => {
-      const radius = candidate.step * 0.25;
-      let circleScore = 0;
-      for (const row of rowLayout.rows) {
-        for (let index = 0; index < 5; index += 1) {
-          const column = candidate.start + index * candidate.step;
-          circleScore += circleSignature(
-            pixels,
-            width,
-            height,
-            { x: column, y: row },
-            radius,
-          );
-        }
+    const radius = candidate.step * 0.36;
+    let circleScore = 0;
+    for (const row of rowLayout.rows) {
+      for (let index = 0; index < 5; index += 1) {
+        const column = candidate.start + index * candidate.step;
+        circleScore += circleSignature(
+          pixels,
+          width,
+          height,
+          { x: column, y: row },
+          radius,
+        );
       }
-      circleScore /= rowLayout.rows.length * 5;
-      return { ...candidate, circleScore };
-    });
+    }
+    circleScore /= rowLayout.rows.length * 5;
+    return { ...candidate, circleScore };
+  });
   const grid = chooseFiveColumnGrid(candidates);
   if (!grid || grid.circleScore < 0.018)
-    throw new Error('Não encontrei as cinco colunas circulares A–E nesta foto.');
-  const points = rowLayout.rows.map((y) =>
+    throw new Error(
+      'Não encontrei as cinco colunas circulares A–E nesta foto.',
+    );
+  const alignedRows = detectRows(pixels, width, height, questionCount, grid);
+  const points = alignedRows.rows.map((y, rowIndex) =>
     Array.from({ length: 5 }, (_, index) => ({
-      x: grid.start + index * grid.step,
+      x: grid.start + index * grid.step + alignedRows.offsets[rowIndex],
       y,
     })),
   );
@@ -402,6 +575,17 @@ export async function readAnswerSheet(
   const pixels = context.getImageData(0, 0, width, height).data;
   const preview = canvas.toDataURL('image/jpeg', 0.82);
 
+  return { ...readAnswerPixels(pixels, width, height, questionCount), preview };
+}
+
+export function readAnswerPixels(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  questionCount: number,
+): Omit<ScanResult, 'preview'> {
+  pixels = normalizeSheetLighting(pixels, width, height);
+
   const regions = [
     { x0: 0, x1: 0.14, y0: 0, y1: 0.075 },
     { x0: 0.86, x1: 1, y0: 0, y1: 0.075 },
@@ -414,7 +598,6 @@ export async function readAnswerSheet(
   if (!found.every(Boolean)) {
     return {
       readings: readFreeGrid(pixels, width, height, questionCount),
-      preview,
       mode: 'free',
     };
   }
@@ -447,7 +630,6 @@ export async function readAnswerSheet(
       0.98,
       { gap: 0.035, top: 0.12 },
     ),
-    preview,
     mode: 'markers',
   };
 }
