@@ -97,6 +97,20 @@ export type ScanResult = {
     matched: number;
     residual: number;
     message: string;
+    // Transient numeric evidence, never included in saved corrections.
+    questions?: Array<{
+      adaptive: number[][];
+      contrast: Array<{
+        paper: number;
+        coverage: number;
+        strictCoverage: number;
+        weakestQuadrant: number;
+        darkness: number;
+        valid: boolean;
+      }>;
+      adaptiveConfidence: number;
+      contrastConfidence: number;
+    }>;
   };
   calibration?: { radiusRatio: number; baseline: Record<Letter, number> };
 };

@@ -155,6 +155,25 @@ describe('geometria e confiança', () => {
       }),
     ).toThrow(/branco/);
   });
+  it('não declara branco quando um modelo incompatível suprime uma marca sólida', () => {
+    const result = read(makeAnswerSheet(expected), {
+      mode: 'legacy',
+      template: {
+        id: 'too-dark',
+        name: 'Impressão muito escura',
+        version: 2,
+        mode: 'legacy',
+        questionCount: 10,
+        geometry: { columns: 5, rows: 10, radiusRatio: 16 / 192 },
+        baseline: { A: 1, B: 1, C: 1, D: 1, E: 1 },
+        createdAt: new Date().toISOString(),
+      },
+    });
+    expect(
+      result.readings.every((r) => r.status === 'uncertain' && needsReview(r)),
+    ).toBe(true);
+    expect(result.readings.map((r) => r.suggestedAnswer)).toEqual(expected);
+  });
   it('rejeita pontos cruzados e modelo com quantidade incompatível', () => {
     expect(() =>
       validateAnchors([

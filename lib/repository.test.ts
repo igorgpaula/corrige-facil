@@ -167,8 +167,11 @@ it('bloqueia pendências e comprimento incorreto; persiste somente resultados es
   await saveCorrection('one', bundle.session.id, {
     ...correction,
     image: 'data:image/jpeg;base64,test',
+    diagnostics: { questions: [{ contrastConfidence: 92 }] },
     readings: readings.map((r) => ({ ...r, suggestedAnswer: 'B' })),
   } as never);
   const saved = (await loadSession('one', bundle.session.id))!.corrections[0];
-  expect(JSON.stringify(saved)).not.toMatch(/base64|suggestedAnswer|image/);
+  expect(JSON.stringify(saved)).not.toMatch(
+    /base64|suggestedAnswer|image|contrastConfidence|diagnostics/,
+  );
 });

@@ -61,6 +61,8 @@ O GitHub Actions executa testes, verifica os tipos e publica automaticamente no 
 - Quando a geometria não for segura, informe A e E da primeira e da última questão. Há ampliação e ajuste pelas setas do teclado. No quadro padronizado, indique os centros dos quatro marcadores.
 - Letras sugeridas não são respostas aceitas. Revise as pendências, confirme branco ou anule uma marcação múltipla. A nota é provisória até resolver todas as pendências.
 - Confiança é uma estimativa heurística, não uma probabilidade calibrada. A revisão visual continua importante, inclusive nas leituras de confiança alta.
+- O leitor combina as duas máscaras adaptativas com uma máscara de **contraste local**, normalizada pelo papel ao redor de cada bolinha. A mesma medição atende tinta preta e azul: exige contraste, preenchimento em quatro setores e separação da segunda alternativa. Só reforça a aceitação quando as leituras concordam; duas marcas fortes ou conflito continuam exigindo revisão. O corte de aceitação permanece em 80%, limitado pela qualidade do alinhamento.
+- Os detalhes numéricos por questão ficam em `ScanResult.diagnostics.questions`, somente na memória. Permitem distinguir a confiança anterior da evidência de contraste sem armazenar fotos nem modificar correções salvas. Esta melhoria atende preenchimentos fortes; não constitui um reconhecedor específico de X.
 
 O OpenCV **4.12.0**, distribuído por `@techstark/opencv-js@4.12.0-release.1`, é servido pelo próprio site, com WASM incorporado, e carregado sob demanda em Worker. A primeira análise baixa aproximadamente 11 MB; as seguintes podem reutilizar o cache. Licença e alteração de compatibilidade estão em `public/vendor/`.
 
@@ -82,17 +84,19 @@ Para validar cada leitura sem exceder o limite de expressões das regras do Fire
 
 As cinco fotografias de referência **não fazem parte do repositório nem da publicação**. Para executar a suíte opcional, defina `OMR_FIXTURES_DIR` com a pasta que contém os arquivos originais e rode `pnpm test`. A suíte compara todas as 50 marcações, mede aceitação/revisão separadamente e exige zero alternativas erradas aceitas como seguras.
 
-Resultado do conjunto de referência em 18/10/2026:
+Resultado do conjunto de referência em 19/10/2026, com contraste local:
 
 | Foto         | Aceitas automaticamente |                                  Encaminhadas para revisão |
 | ------------ | ----------------------: | ---------------------------------------------------------: |
 | 18/10, 14:25 |                       0 | 10 — ajuste de quatro pontos; depois, 10 leituras corretas |
-| 18/10, 15:04 |                       9 |                               1 — sugestão A na questão 10 |
+| 18/10, 15:04 |                      10 |                                                          0 |
 | 07/09, 14:55 |                       6 |                                                          4 |
 | 07/09, 15:02 |                       7 |                                                          3 |
 | Designer     |                      10 |                                                          0 |
 
 Não houve erros aceitos como seguros nesse conjunto. Isso não significa garantia de acerto em fotos futuras. Cenários sintéticos reservados verificam perspectiva, inclinação, resolução, iluminação, tinta azul/preta, lápis, branco e rasura dupla; eles não devem ser usados para ajustar os limiares.
+
+A questão 10 da foto de 18/10 às 15:04 passou de sugestão A (78% na execução local sem modelo) para A aceita (81%, limitada pela geometria). A regressão também usa o quadro vazio de 07/09 às 13:39, uma conversão da foto para tons de cinza e a foto com X de 18/10 às 21:48, exigindo ausência de respostas erradas aceitas como seguras. `OMR_DIAGNOSTICS=true` imprime evidências numéricas locais para investigação; nenhum arquivo de imagem integra o deploy.
 
 ### Regras de segurança
 

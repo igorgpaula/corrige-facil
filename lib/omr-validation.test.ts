@@ -45,6 +45,38 @@ it.skipIf(!process.env.OMR_FIXTURES_DIR).each([30, 60])(
 // Reserved scenarios: do not tune the detector against these permutations.
 const key: Letter[] = ['B', 'E', 'A', 'D', 'C', 'A', 'D', 'B', 'E', 'C'];
 describe('validação reservada de degradações', () => {
+  it.each([false, true])(
+    'preserva branco e dupla com tinta azul=%s após variação forte de iluminação',
+    async (blue) => {
+      const marks: Array<Letter | Letter[] | null> = [...key];
+      marks[2] = null;
+      marks[6] = ['B', 'E'];
+      const image = makeAnswerSheet(marks, { blue });
+      // A separate photographic transform, not used to choose contrast thresholds.
+      for (let y = 0; y < image.height; y++)
+        for (let x = 0; x < image.width; x++) {
+          const factor = 0.36 + (0.64 * x) / image.width;
+          const offset = (y * image.width + x) * 4;
+          for (let channel = 0; channel < 3; channel++)
+            image.pixels[offset + channel] *= factor;
+        }
+      const { cv } = await testOpenCv();
+      const result = analyzeSheet(
+        cv,
+        image.pixels,
+        image.width,
+        image.height,
+        10,
+        { mode: 'legacy' },
+      );
+      result.readings.forEach((r, i) => {
+        if (i === 6) expect(needsReview(r)).toBe(true);
+        else if (!needsReview(r)) expect(r.answer).toBe(marks[i]);
+      });
+      expect(result.readings[2].answer).toBeNull();
+    },
+    60000,
+  );
   it.each([0.55, 0.8])(
     'não aceita erro seguro após redução de resolução a %s',
     async (scale) => {

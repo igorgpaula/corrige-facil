@@ -1,4 +1,5 @@
 import type { CvMat, OpenCv } from './opencv';
+import { measureMarkContrast, rankMarkContrast } from './mark-contrast';
 import {
   getQuestionCoordinates,
   getStandardSheetLayout,
@@ -527,7 +528,7 @@ export function analyzeSheet(
     allocated.push(m);
     return m;
   };
-  const engine = 'opencv-4.12.0-calibrated-v1';
+  const engine = 'opencv-4.12.0-local-contrast-v2';
   try {
     const rgba = mat(height, width, cv.CV_8UC4);
     rgba.data.set(pixels);
@@ -751,14 +752,15 @@ export function analyzeSheet(
       )
         geometry.confidence = Math.min(geometry.confidence, 0.59);
     }
+    const rectifiedPixels = new Uint8ClampedArray(
+      rectified.data.buffer,
+      rectified.data.byteOffset,
+      rectified.data.byteLength,
+    );
     const scores = points.map((row) =>
       row.map((p) =>
         diskScores(
-          new Uint8ClampedArray(
-            rectified.data.buffer,
-            rectified.data.byteOffset,
-            rectified.data.byteLength,
-          ),
+          rectifiedPixels,
           maskA.data,
           maskB.data,
           canonicalWidth,
@@ -783,7 +785,21 @@ export function analyzeSheet(
             )),
       ]),
     ) as Record<(typeof LETTERS)[number], number>;
-    const readings: AnswerReading[] = scores.map((row) => {
+    const contrast = points.map((row) =>
+      row.map((p) =>
+        measureMarkContrast(
+          rectifiedPixels,
+          canonicalWidth,
+          canonicalHeight,
+          p,
+          radius,
+        ),
+      ),
+    );
+    const questionDiagnostics: NonNullable<
+      ScanResult['diagnostics']['questions']
+    > = [];
+    const readings: AnswerReading[] = scores.map((row, question) => {
       const rank = (variant: 'a' | 'b') =>
         row
           .map((s, index) => ({
@@ -799,12 +815,40 @@ export function analyzeSheet(
         (a[0].value + b.find((v) => v.index === a[0].index)!.value) / 2;
       const gap = Math.min(a[0].value - a[1].value, b[0].value - b[1].value);
       const stable = a[0].index === b[0].index;
+      const local = rankMarkContrast(contrast[question]);
+      const diagnostic = {
+        adaptive: LETTERS.map((_, index) => [
+          a.find((v) => v.index === index)!.value,
+          b.find((v) => v.index === index)!.value,
+        ]),
+        contrast: contrast[question],
+        adaptiveConfidence: 0,
+        contrastConfidence: Math.round(
+          100 * Math.min(geometry.confidence, local.confidence),
+        ),
+      };
+      questionDiagnostics.push(diagnostic);
+      if (local.multiple && !options.calibrate)
+        return {
+          answer: null,
+          confidence: Math.round(geometry.confidence * 90),
+          source: 'scan',
+          status: 'multiple',
+        };
       if (a[0].value < 0.13 && b[0].value < 0.13)
         return {
           answer: null,
           confidence: Math.round(geometry.confidence * 95),
           source: 'scan',
-          status: geometry.confidence >= 0.8 ? 'blank' : 'uncertain',
+          // A mismatched blank-sheet baseline can suppress adaptive evidence.
+          // Visible local ink must then be reviewed, never accepted as blank.
+          status:
+            geometry.confidence >= 0.8 && local.confidence < 0.6
+              ? 'blank'
+              : 'uncertain',
+          ...(local.confidence >= 0.6
+            ? { suggestedAnswer: LETTERS[local.index] }
+            : {}),
         };
       if (a[1].value > 0.43 && b[1].value > 0.43)
         return {
@@ -813,7 +857,7 @@ export function analyzeSheet(
           source: 'scan',
           status: 'multiple',
         };
-      const confidence = Math.round(
+      const adaptiveConfidence = Math.round(
         100 *
           Math.min(
             geometry.confidence,
@@ -822,7 +866,18 @@ export function analyzeSheet(
             stable ? 1 : 0.55,
           ),
       );
-      const accepted = confidence >= 80 && stable && gap > 0.09;
+      diagnostic.adaptiveConfidence = adaptiveConfidence;
+      // Additional evidence can confirm a solid mark only if both adaptive
+      // readings identify the same option. Conflicting strong evidence needs review.
+      const agreement = stable && local.index === a[0].index;
+      const conflict = local.confidence >= 0.8 && !agreement;
+      const confidence = conflict
+        ? Math.min(79, adaptiveConfidence)
+        : Math.max(
+            adaptiveConfidence,
+            agreement ? diagnostic.contrastConfidence : 0,
+          );
+      const accepted = confidence >= 80 && stable && gap > 0.09 && !conflict;
       return {
         answer: accepted ? LETTERS[a[0].index] : null,
         confidence,
@@ -867,6 +922,7 @@ export function analyzeSheet(
         geometry: Math.round(geometry.confidence * 100),
         matched: geometry.matched,
         residual: geometry.residual,
+        questions: questionDiagnostics,
         message:
           alignment === 'verified'
             ? 'Grade alinhada. Confira os círculos sobre a foto e revise as pendências.'
