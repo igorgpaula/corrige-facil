@@ -1,5 +1,8 @@
 import { LETTERS, type AnswerReading } from './types';
 
+// Keep firestore.rules validReading in sync; colors still distinguish 80%+.
+export const MIN_SCAN_CONFIDENCE = 70;
+
 export type StandardSheetVersion = 2 | 3 | 4;
 
 // V2 is retained for already printed sheets. New sheets use a single column
@@ -67,7 +70,7 @@ export function needsReview(reading: AnswerReading) {
   return (
     reading.status === 'uncertain' ||
     reading.status === 'multiple' ||
-    reading.confidence < 80 ||
+    reading.confidence < MIN_SCAN_CONFIDENCE ||
     (!reading.answer && reading.status !== 'blank')
   );
 }

@@ -46,7 +46,7 @@ service cloud.firestore {
     // 1,000-expression limit. The public correction keeps the original arrays.
     function validReading(r, answer) {
       return r.keys().hasOnly(['answer','confidence','source','status'])
-        && r.answer == answer && r.confidence is number && r.confidence >= 80 && r.confidence <= 100
+        && r.answer == answer && r.confidence is number && r.confidence >= 70 && r.confidence <= 100
         && r.source in ['scan','manual']
         && (r.status == (answer == null ? 'blank' : 'read')
           || (r.source == 'manual' && answer == null && r.status == 'multiple'));

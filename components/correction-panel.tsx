@@ -13,7 +13,7 @@ import { Input } from './ui/input';
 import { AnswerGrid } from './answer-grid';
 import { PhotoReview } from './photo-review';
 import { answersFromReadings, readAnswerSheet } from '@/lib/omr';
-import { needsReview } from '@/lib/sheet-geometry';
+import { MIN_SCAN_CONFIDENCE, needsReview } from '@/lib/sheet-geometry';
 import {
   associateAnswerSheetTemplate,
   listAnswerSheetTemplates,
@@ -407,7 +407,9 @@ export function CorrectionPanel({
             <p className="local-diagnostics">
               Qualidade do alinhamento: {result.diagnostics.geometry}% ·
               Contornos compatíveis: {result.diagnostics.matched}. Confiança
-              estimada, não probabilidade garantida.
+              estimada, não probabilidade garantida. Aceitação automática a
+              partir de {MIN_SCAN_CONFIDENCE}%, com alinhamento aprovado e sem
+              conflito entre as leituras.
             </p>
             <Button variant="outline" disabled={saving} onClick={reset}>
               <X /> Cancelar e descartar foto

@@ -299,6 +299,21 @@ describe.skipIf(!host)('regras Firestore — somente no emulador local', () => {
     expect(saved.body).not.toContain('error');
     expect(saved.status).toBe(200);
   });
+  it.each([69, 70, 79])(
+    'valida o limite de confiança de %s%% no servidor',
+    async (confidence) => {
+      const data = correction();
+      data.readings[9].confidence = confidence;
+      const result = await commit(
+        correctionWrites(
+          `users/teacher-one/sessions/locked/corrections/confidence-${confidence}`,
+          data,
+        ),
+        owner,
+      );
+      expect(result.status, result.body).toBe(confidence >= 70 ? 200 : 403);
+    },
+  );
   it('aceita branco confirmado e anulação manual, mas não dupla automática', async () => {
     const blank = correction();
     blank.answers.fill(null as never);

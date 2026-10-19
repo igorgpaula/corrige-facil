@@ -281,6 +281,41 @@ describe('validação reservada: não ajustar limiares a estes casos', () => {
   });
 });
 describe('salvamento assistido', () => {
+  it.each([70, 79, 80, 100])(
+    'aceita respostas finais a partir de 70%%: %s',
+    (confidence) => {
+      for (const answer of ['A', null] as const) {
+        const reading = {
+          answer,
+          confidence,
+          source: 'scan' as const,
+          status: answer === null ? ('blank' as const) : ('read' as const),
+        };
+        expect(needsReview(reading)).toBe(false);
+        expect(() => assertFinalReadings([reading], 1)).not.toThrow();
+      }
+    },
+  );
+  it('mantém revisão abaixo de 70% ou com pendências, mesmo em confiança alta', () => {
+    expect(
+      needsReview({
+        answer: 'A',
+        confidence: 69,
+        source: 'scan',
+        status: 'read',
+      }),
+    ).toBe(true);
+    expect(() =>
+      assertFinalReadings(
+        [{ answer: 'A', confidence: 69, source: 'scan', status: 'read' }],
+        1,
+      ),
+    ).toThrow();
+    for (const status of ['uncertain', 'multiple'] as const)
+      expect(
+        needsReview({ answer: null, confidence: 90, source: 'scan', status }),
+      ).toBe(true);
+  });
   it('bloqueia sugestão, dupla e branco incerto; permite confirmações manuais', () => {
     for (const status of ['uncertain', 'multiple'] as const)
       expect(() =>
@@ -291,7 +326,7 @@ describe('salvamento assistido', () => {
       ).toThrow();
     expect(() =>
       assertFinalReadings(
-        [{ answer: null, confidence: 70, source: 'scan', status: 'blank' }],
+        [{ answer: null, confidence: 69, source: 'scan', status: 'blank' }],
         1,
       ),
     ).toThrow();

@@ -3,6 +3,7 @@ import { measureMarkContrast, rankMarkContrast } from './mark-contrast';
 import {
   getQuestionCoordinates,
   getStandardSheetLayout,
+  MIN_SCAN_CONFIDENCE,
 } from './sheet-geometry';
 import {
   LETTERS,
@@ -872,12 +873,13 @@ export function analyzeSheet(
       const agreement = stable && local.index === a[0].index;
       const conflict = local.confidence >= 0.8 && !agreement;
       const confidence = conflict
-        ? Math.min(79, adaptiveConfidence)
+        ? Math.min(MIN_SCAN_CONFIDENCE - 1, adaptiveConfidence)
         : Math.max(
             adaptiveConfidence,
             agreement ? diagnostic.contrastConfidence : 0,
           );
-      const accepted = confidence >= 80 && stable && gap > 0.09 && !conflict;
+      const accepted =
+        confidence >= MIN_SCAN_CONFIDENCE && stable && gap > 0.09 && !conflict;
       return {
         answer: accepted ? LETTERS[a[0].index] : null,
         confidence,
