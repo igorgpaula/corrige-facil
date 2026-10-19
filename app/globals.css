@@ -1858,7 +1858,7 @@ footer svg {
 .photo-stage {
   position: relative;
   min-width: 100%;
-  touch-action: pan-x pan-y;
+  touch-action: pan-x pan-y pinch-zoom;
 }
 .photo-stage.adjusting {
   cursor: crosshair;
@@ -1907,6 +1907,47 @@ footer svg {
 }
 .photo-overlay .anchor-point.active {
   fill: #ffcf65;
+}
+.photo-overlay .anchor-point.confirmed {
+  fill: #c5f1de;
+  stroke: #087c59;
+}
+.alignment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.anchor-confirm-panel {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #c6dcde;
+  border-radius: 10px;
+  background: #f4faf9;
+}
+.anchor-confirm-panel p {
+  margin: 0;
+  font-size: 13px;
+}
+.anchor-confirm-panel p span {
+  display: block;
+  margin-top: 4px;
+}
+.anchor-mode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.anchor-mode-actions button[aria-pressed='true'] {
+  background: #fff3d5;
+  border-color: #d78c00;
+}
+.anchor-confirm-panel button {
+  min-height: 44px;
+  height: auto;
+  white-space: normal;
 }
 .anchor-steps {
   display: grid;

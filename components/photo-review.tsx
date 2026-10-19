@@ -1,6 +1,12 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { Button } from './ui/button';
+import {
+  anchorEditorReducer,
+  canApplyAnchors,
+  createAnchorEditor,
+  PhotoTapGesture,
+} from '@/lib/anchor-editor';
 import type {
   ScanResult,
   SheetAnchors,
@@ -27,16 +33,22 @@ export function PhotoReview({
   useEffect(() => {
     onEditingChange?.(adjusting);
   }, [adjusting, onEditingChange]);
-  const [points, setPoints] = useState<SheetAnchors>(
-    result.anchors ?? [
-      { x: 0.28, y: 0.18 },
-      { x: 0.68, y: 0.18 },
-      { x: 0.68, y: 0.88 },
-      { x: 0.28, y: 0.88 },
-    ],
+  const initialPoints: SheetAnchors = result.anchors ?? [
+    { x: 0.28, y: 0.18 },
+    { x: 0.68, y: 0.18 },
+    { x: 0.68, y: 0.88 },
+    { x: 0.28, y: 0.88 },
+  ];
+  const [editor, dispatch] = useReducer(
+    anchorEditorReducer,
+    initialPoints,
+    createAnchorEditor,
   );
-  const [active, setActive] = useState(0);
-  const [touched, setTouched] = useState<number[]>([]);
+  const { points, active, candidate, confirmed, positioning } = editor;
+  const gesture = useRef(new PhotoTapGesture());
+  const shownPoints = points.map((p, index) =>
+    index === active && candidate ? candidate : p,
+  );
   const [zoom, setZoom] = useState(1);
   const ratio = result.imageSize.height / result.imageSize.width;
   const last = String(count).padStart(2, '0');
@@ -55,18 +67,7 @@ export function PhotoReview({
           'Marcador inferior esquerdo',
         ];
   const update = (point: SheetPoint) => {
-    setPoints(
-      (previous) =>
-        previous.map((p, index) =>
-          index === active
-            ? {
-                x: Math.max(0, Math.min(1, point.x)),
-                y: Math.max(0, Math.min(1, point.y)),
-              }
-            : p,
-        ) as SheetAnchors,
-    );
-    setTouched((previous) => [...new Set([...previous, active])]);
+    dispatch({ type: 'propose', point });
   };
   return (
     <div className="photo-review">
@@ -79,7 +80,11 @@ export function PhotoReview({
           <select
             aria-label="Ampliação da foto"
             value={zoom}
-            onChange={(event) => setZoom(Number(event.target.value))}
+            disabled={busy}
+            onChange={(event) => {
+              gesture.current.invalidate();
+              setZoom(Number(event.target.value));
+            }}
           >
             <option value={1}>1×</option>
             <option value={2}>2×</option>
@@ -90,8 +95,9 @@ export function PhotoReview({
       {adjusting && (
         <>
           <p className="alignment-instruction">
-            Toque no centro indicado. Use a ampliação para posicionar com
-            precisão.
+            Navegue e amplie a foto à vontade. Escolha “Posicionar ponto”, toque
+            no centro indicado e pressione “OK, confirmar ponto”. Arrastar a
+            foto não marca pontos. Nada é aplicado sem confirmação.
           </p>
           <div className="anchor-steps">
             {labels.map((label, index) => (
@@ -99,39 +105,49 @@ export function PhotoReview({
                 type="button"
                 key={index}
                 className={active === index ? 'active' : ''}
-                onClick={() => setActive(index)}
+                disabled={busy}
+                aria-pressed={active === index}
+                onClick={() => {
+                  gesture.current.invalidate();
+                  dispatch({ type: 'select', index });
+                }}
               >
-                {touched.includes(index) ? '✓ ' : ''}
+                {confirmed.includes(index) ? '✓ ' : ''}
                 {index + 1}. {label}
               </button>
             ))}
           </div>
         </>
       )}
-      <div className="photo-scroll">
+      <div
+        className="photo-scroll"
+        onScroll={() => gesture.current.invalidate()}
+      >
         <div
-          className={`photo-stage ${adjusting ? 'adjusting' : ''}`}
+          className={`photo-stage ${adjusting && positioning ? 'adjusting' : ''}`}
           style={{
             width: `${zoom * 100}%`,
             aspectRatio: `${result.imageSize.width}/${result.imageSize.height}`,
           }}
-          role={adjusting ? 'application' : undefined}
+          role={adjusting ? 'group' : undefined}
           tabIndex={adjusting ? 0 : undefined}
           aria-label={
             adjusting
-              ? `Posicionar ponto ${active + 1}: ${labels[active]}. Use toque ou setas do teclado.`
+              ? `${positioning ? 'Posicionar' : 'Navegar até o'} ponto ${active + 1}: ${labels[active]}. Confirme a posição no botão OK.`
               : undefined
           }
           onKeyDown={(event) => {
             if (
               !adjusting ||
+              !positioning ||
+              busy ||
               !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(
                 event.key,
               )
             )
               return;
             event.preventDefault();
-            const p = points[active];
+            const p = candidate ?? points[active];
             update({
               x:
                 p.x +
@@ -150,13 +166,28 @@ export function PhotoReview({
             });
           }}
           onPointerDown={(event) => {
-            if (!adjusting || busy) return;
+            if (!adjusting || !positioning || busy || event.button !== 0)
+              return;
+            gesture.current.down(event.pointerId, event.clientX, event.clientY);
+          }}
+          onPointerMove={(event) =>
+            gesture.current.move(event.pointerId, event.clientX, event.clientY)
+          }
+          onPointerCancel={(event) => gesture.current.cancel(event.pointerId)}
+          onPointerLeave={(event) => gesture.current.cancel(event.pointerId)}
+          onWheel={() => gesture.current.invalidate()}
+          onPointerUp={(event) => {
+            const tapped = gesture.current.up(
+              event.pointerId,
+              event.clientX,
+              event.clientY,
+            );
+            if (!tapped || !adjusting || !positioning || busy) return;
             const rect = event.currentTarget.getBoundingClientRect();
             update({
               x: (event.clientX - rect.left) / rect.width,
               y: (event.clientY - rect.top) / rect.height,
             });
-            setActive((value) => Math.min(3, value + 1));
           }}
         >
           {/* Photo is an in-memory local preview, never uploaded. */}
@@ -198,18 +229,18 @@ export function PhotoReview({
             {adjusting && (
               <>
                 <polygon
-                  points={points
+                  points={shownPoints
                     .map((p) => `${p.x * 1000},${p.y * 1000 * ratio}`)
                     .join(' ')}
                   className="alignment-polygon"
                 />
-                {points.map((p, index) => (
+                {shownPoints.map((p, index) => (
                   <g key={index}>
                     <circle
                       cx={p.x * 1000}
                       cy={p.y * 1000 * ratio}
                       r={index === active ? 17 : 12}
-                      className="anchor-point"
+                      className={`anchor-point ${index === active ? 'active' : ''} ${confirmed.includes(index) && !(index === active && candidate) ? 'confirmed' : ''}`}
                     />
                     <text x={p.x * 1000 + 20} y={p.y * 1000 * ratio - 15}>
                       {index + 1}
@@ -223,14 +254,81 @@ export function PhotoReview({
       </div>
       {adjusting ? (
         <div className="alignment-actions">
+          <div className="anchor-confirm-panel">
+            <p aria-live="polite">
+              <strong>
+                Ponto {active + 1}: {labels[active]}
+              </strong>
+              <span>
+                {confirmed.length}/4 confirmados.{' '}
+                {candidate
+                  ? 'Posição provisória — confirme no botão OK.'
+                  : canApplyAnchors(editor)
+                    ? 'Todos confirmados. Aplique o alinhamento ou selecione um ponto para editar.'
+                    : positioning
+                      ? 'Toque na foto ou use as setas do teclado para ajustar.'
+                      : 'Modo navegar: tocar ou arrastar não altera os pontos.'}
+              </span>
+            </p>
+            <div className="anchor-mode-actions">
+              <Button
+                variant="outline"
+                disabled={busy}
+                aria-pressed={!positioning}
+                onClick={() => {
+                  gesture.current.invalidate();
+                  dispatch({ type: 'navigate' });
+                }}
+              >
+                Navegar
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy}
+                aria-pressed={positioning}
+                onClick={() => dispatch({ type: 'position' })}
+              >
+                Posicionar ponto {active + 1}
+              </Button>
+            </div>
+            <Button
+              className="anchor-confirm-button"
+              disabled={busy || !candidate}
+              onClick={() => {
+                gesture.current.invalidate();
+                dispatch({ type: 'confirm' });
+              }}
+            >
+              OK, confirmar ponto {active + 1}
+            </Button>
+            {candidate && (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => dispatch({ type: 'discard' })}
+              >
+                Desfazer posição provisória
+              </Button>
+            )}
+          </div>
           <Button
-            disabled={busy || touched.length < 4}
-            onClick={() => onAlign(points)}
+            disabled={busy || !canApplyAnchors(editor)}
+            onClick={() => {
+              if (!busy && canApplyAnchors(editor)) onAlign(points);
+            }}
           >
             Aplicar os quatro pontos
           </Button>
           {result.alignment === 'verified' && (
-            <Button variant="outline" onClick={() => setAdjusting(false)}>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                gesture.current.invalidate();
+                dispatch({ type: 'reset', points: initialPoints });
+                setAdjusting(false);
+              }}
+            >
               Cancelar ajuste
             </Button>
           )}
@@ -238,9 +336,11 @@ export function PhotoReview({
       ) : (
         <Button
           variant="outline"
+          disabled={busy}
           onClick={() => {
             setAdjusting(true);
-            setTouched([]);
+            gesture.current.invalidate();
+            dispatch({ type: 'reset', points: initialPoints });
           }}
         >
           Ajustar quatro pontos
